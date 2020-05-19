@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"crypto/tls"
 	"fmt"
+	"io"
 	"net"
 	"sync"
 
@@ -24,14 +25,19 @@ func DevelopmentLogger() Option {
 	}
 }
 
+func ProductionLogger() Option {
+	return func(options *Options) {
+		options.Logger, _ = zap.NewProduction()
+	}
+}
+
 type Client struct {
-	options *Options
+	opts *Options
 
 	conn         net.Conn
 	mu           sync.RWMutex
 	invokeIDPool *pool.InvokeIDPool
 	requests     map[uint32]chan *Event
-	done         chan struct{}
 }
 
 func NewClient(addr string, opts ...Option) (*Client, error) {
@@ -56,58 +62,81 @@ func NewClient(addr string, opts ...Option) (*Client, error) {
 	}
 
 	return &Client{
-		options:      options,
+		opts:         options,
 		conn:         conn,
 		invokeIDPool: pool.NewInvokeIDPool(),
 		requests:     make(map[uint32]chan *Event),
 	}, nil
 }
 
+func (c *Client) consumeEvent(reader *bufio.Reader) (*Event, error) {
+	b, err := reader.ReadBytes(ETX)
+	if err != nil {
+		// ReadBytes returns err != nil if and only if line does not end in delim.
+		return nil, err
+	}
+
+	c.opts.Logger.Debug("event has received", zap.ByteString("raw", b))
+
+	event, err := decodeEvent(b)
+	if err != nil {
+		return nil, err
+	}
+
+	c.opts.Logger.With(
+		zap.String("keyword", event.Keyword),
+		zap.ByteString("type", []byte{byte(event.Type)}),
+		zap.String("client", event.Client),
+		zap.Uint32("process_id", event.ProcessID),
+		zap.Uint32("invoke_id", event.InvokeID),
+		zap.Strings("segments", event.Segments),
+	).Info("event has decoded")
+
+	return event, nil
+}
+
 func (c *Client) Start() {
 	defer c.conn.Close()
 	br := bufio.NewReader(c.conn)
 
-	for {
-		select {
-		case <-c.done:
-			return
-		default:
-			b, err := br.ReadBytes(ETX)
-			if err != nil {
-				// ReadBytes returns err != nil if and only if line does not end in delim.
-				return
-			}
-
-			event, err := decodeEvent(b)
-			if err != nil {
-				c.options.Logger.Error("error while decoding event", zap.Error(err))
-				return
-			}
-
-			c.options.Logger.With(
-				zap.String("keyword", event.Keyword),
-				zap.ByteString("type", []byte{byte(event.Type)}),
-				zap.String("client", event.Client),
-				zap.Uint32("process_id", event.ProcessID),
-				zap.Uint32("invoke_id", event.InvokeID),
-				zap.Strings("segments", event.Segments),
-			).Info("event received")
-
-			func() {
-				c.mu.RLock()
-				defer c.mu.RUnlock()
-
-				eventChan, ok := c.requests[event.InvokeID]
-				if !ok {
-					return
-				}
-
-				eventChan <- event
-			}()
-		}
+	// Consume AGTSTART
+	event, err := c.consumeEvent(br)
+	if err != nil {
+		c.opts.Logger.Error("error while consuming an event", zap.Error(err))
+		return
 	}
-}
 
-func (c *Client) Stop() {
-	c.done <- struct{}{}
+	// Check that first notification message is correct
+	if event.Keyword != "AGTSTART" ||
+		len(event.Segments) < 2 ||
+		event.Segments[0] != "0" ||
+		event.Segments[1] != "AGENT_STARTUP" {
+		c.opts.Logger.Error("server cannot accept new clients")
+		return
+	}
+
+	for {
+		event, err := c.consumeEvent(br)
+		if err != nil {
+			// Logoff or connection closed
+			if err == io.EOF {
+				return
+			}
+
+			c.opts.Logger.Error("error while consuming an event", zap.Error(err))
+			continue
+		}
+
+		func() {
+			c.mu.RLock()
+			defer c.mu.RUnlock()
+
+			eventChan, ok := c.requests[event.InvokeID]
+			if !ok {
+				return
+			}
+
+			eventChan <- event
+		}()
+	}
 }

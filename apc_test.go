@@ -1,23 +1,37 @@
 package apc
 
 import (
+	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func TestNewClient(t *testing.T) {
+var client *Client
+
+func TestMain(m *testing.M) {
 	c, err := NewClient("localhost:22700", DevelopmentLogger())
-	require.NoError(t, err)
+	if err != nil {
+		return
+	}
+	client = c
 
 	go c.Start()
+	os.Exit(m.Run())
+}
 
-	assert.NoError(t, c.Logon("testuser", "12345"))
+func TestClient_Logon(t *testing.T) {
+	assert.NoError(t, client.Logon("testuser", "12345"))
+}
 
-	jobs, err := c.ListJobs(JobTypeAll)
-	assert.NoError(t, err)
+func TestClient_ListJobs(t *testing.T) {
+	jobs, err := client.ListJobs(JobTypeAll)
+	require.NoError(t, err)
+
 	_ = jobs
+}
 
-	assert.NoError(t, c.Logoff())
+func TestClient_Logoff(t *testing.T) {
+	assert.NoError(t, client.Logoff())
 }
