@@ -4,16 +4,28 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"go.uber.org/zap"
 )
 
 func (c *Client) Logon(agentName string, password string) error {
+	keyword := "AGTLogon"
+
 	invokeID := c.invokeIDPool.Get()
 	defer c.invokeIDPool.Release(invokeID)
 
-	b, _ := encodeCommand("AGTLogon", invokeID, agentName, password)
+	b, _ := encodeCommand(keyword, invokeID, agentName, password)
+	c.opts.Logger.Debug("command has encoded", zap.ByteString("raw", b))
+
 	if _, err := c.conn.Write(b); err != nil {
 		return fmt.Errorf("cannot write command: %w", err)
 	}
+	c.opts.Logger.With(
+		zap.String("keyword", keyword),
+		zap.Uint32("invoke_id", invokeID),
+		zap.String("agent_name", agentName),
+		zap.String("password", password),
+	).Info("command has sent")
 
 	eventChan := make(chan *Event, 2)
 	defer close(eventChan)
@@ -34,14 +46,23 @@ func (c *Client) Logon(agentName string, password string) error {
 	return nil
 }
 
+// Logoff sends ATGLogoff command, then Proactive Control server terminates session
 func (c *Client) Logoff() error {
+	keyword := "AGTLogoff"
+
 	invokeID := c.invokeIDPool.Get()
 	defer c.invokeIDPool.Release(invokeID)
 
-	b, _ := encodeCommand("AGTLogoff", invokeID)
+	b, _ := encodeCommand(keyword, invokeID)
+	c.opts.Logger.Debug("command has encoded", zap.ByteString("raw", b))
+
 	if _, err := c.conn.Write(b); err != nil {
 		return fmt.Errorf("cannot write command: %w", err)
 	}
+	c.opts.Logger.With(
+		zap.String("keyword", keyword),
+		zap.Uint32("invoke_id", invokeID),
+	).Info("command has sent")
 
 	eventChan := make(chan *Event, 1)
 	defer close(eventChan)
@@ -84,13 +105,22 @@ const (
 )
 
 func (c *Client) ListJobs(jobType JobType) ([]Job, error) {
+	keyword := "AGTListJobs"
+
 	invokeID := c.invokeIDPool.Get()
 	defer c.invokeIDPool.Release(invokeID)
 
-	b, _ := encodeCommand("AGTListJobs", invokeID, string([]byte{byte(jobType)}))
+	b, _ := encodeCommand(keyword, invokeID, string([]byte{byte(jobType)}))
+	c.opts.Logger.Debug("command has encoded", zap.ByteString("raw", b))
+
 	if _, err := c.conn.Write(b); err != nil {
 		return nil, fmt.Errorf("cannot write command: %w", err)
 	}
+	c.opts.Logger.With(
+		zap.String("keyword", keyword),
+		zap.Uint32("invoke_id", invokeID),
+		zap.ByteString("job_type", []byte{byte(jobType)}),
+	).Info("command has sent")
 
 	eventChan := make(chan *Event, 1)
 	defer close(eventChan)
