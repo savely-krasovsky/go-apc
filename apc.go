@@ -10,6 +10,7 @@ import (
 
 	"gitlab.sovcombank.group/scb-mobile/lib/go-apc.git/pool"
 	"go.uber.org/zap"
+	"golang.org/x/text/encoding/charmap"
 )
 
 type Options struct {
@@ -37,7 +38,7 @@ type Client struct {
 	conn         net.Conn
 	mu           sync.RWMutex
 	invokeIDPool *pool.InvokeIDPool
-	requests     map[uint32]chan *Event
+	requests     map[uint32]chan Event
 }
 
 func NewClient(addr string, opts ...Option) (*Client, error) {
@@ -61,26 +62,56 @@ func NewClient(addr string, opts ...Option) (*Client, error) {
 		return nil, fmt.Errorf("error while dialing host: %w", err)
 	}
 
-	return &Client{
+	br := bufio.NewReaderSize(conn, 4096)
+
+	c := &Client{
 		opts:         options,
 		conn:         conn,
 		invokeIDPool: pool.NewInvokeIDPool(),
-		requests:     make(map[uint32]chan *Event),
-	}, nil
-}
+		requests:     make(map[uint32]chan Event),
+	}
 
-func (c *Client) consumeEvent(reader *bufio.Reader) (*Event, error) {
-	b, err := reader.ReadBytes(ETX)
+	// Consume AGTSTART
+	event, err := c.consumeEvent(br)
 	if err != nil {
-		// ReadBytes returns err != nil if and only if line does not end in delim.
+		c.opts.Logger.Error("error while consuming an event", zap.Error(err))
 		return nil, err
 	}
 
-	c.opts.Logger.Debug("event has received", zap.ByteString("raw", b))
-
-	event, err := decodeEvent(b)
-	if err != nil {
+	// Check that first notification message is correct
+	if event.Keyword != "AGTSTART" ||
+		event.CommandStatus != 0 ||
+		event.MessageCode != "AGENT_STARTUP" {
+		c.opts.Logger.Error("server cannot accept new clients")
 		return nil, err
+	}
+
+	return c, nil
+}
+
+func (c *Client) consumeEvent(reader io.Reader) (Event, error) {
+	decoder := charmap.Windows1251.NewDecoder().Reader(reader)
+	br := bufio.NewReader(decoder)
+
+	var atom string
+	for {
+		char, _, err := br.ReadRune()
+		if err != nil {
+			return Event{}, err
+		}
+
+		atom += string(char)
+
+		if char == ETX || char == ETB {
+			break
+		}
+	}
+
+	c.opts.Logger.Debug("event has received", zap.String("raw", atom))
+
+	event, err := decodeEvent(atom)
+	if err != nil {
+		return Event{}, err
 	}
 
 	c.opts.Logger.With(
@@ -90,6 +121,8 @@ func (c *Client) consumeEvent(reader *bufio.Reader) (*Event, error) {
 		zap.Uint32("process_id", event.ProcessID),
 		zap.Uint32("invoke_id", event.InvokeID),
 		zap.Strings("segments", event.Segments),
+		zap.Uint8("command_status", event.CommandStatus),
+		zap.String("message_code", string(event.MessageCode)),
 	).Info("event has decoded")
 
 	return event, nil
@@ -98,22 +131,6 @@ func (c *Client) consumeEvent(reader *bufio.Reader) (*Event, error) {
 func (c *Client) Start() {
 	defer c.conn.Close()
 	br := bufio.NewReader(c.conn)
-
-	// Consume AGTSTART
-	event, err := c.consumeEvent(br)
-	if err != nil {
-		c.opts.Logger.Error("error while consuming an event", zap.Error(err))
-		return
-	}
-
-	// Check that first notification message is correct
-	if event.Keyword != "AGTSTART" ||
-		len(event.Segments) < 2 ||
-		event.Segments[0] != "0" ||
-		event.Segments[1] != "AGENT_STARTUP" {
-		c.opts.Logger.Error("server cannot accept new clients")
-		return
-	}
 
 	for {
 		event, err := c.consumeEvent(br)
