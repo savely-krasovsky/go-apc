@@ -77,14 +77,14 @@ func (c *Client) Logon(agentName string, password string) error {
 	}
 
 	for event := range eventChan {
-		if event.MessageCode == MessageCodePending {
+		if event.IsPending() {
 			continue
 		}
-		if event.MessageCode == MessageCodeComplete {
+		if event.IsComplete() {
 			break
 		}
 
-		return fmt.Errorf("unexpected message code: %s", event.MessageCode)
+		return fmt.Errorf("unexpected event")
 	}
 
 	return nil
@@ -100,14 +100,14 @@ func (c *Client) ReserveHeadset(headsetID int) error {
 	}
 
 	for event := range eventChan {
-		if event.MessageCode == MessageCodePending {
+		if event.IsPending() {
 			continue
 		}
-		if event.MessageCode == MessageCodeComplete {
+		if event.IsComplete() {
 			break
 		}
 
-		return fmt.Errorf("unexpected message code: %s", event.MessageCode)
+		return fmt.Errorf("unexpected event")
 	}
 
 	return nil
@@ -121,14 +121,14 @@ func (c *Client) ConnHeadset() error {
 	}
 
 	for event := range eventChan {
-		if event.MessageCode == MessageCodePending {
+		if event.IsPending() {
 			continue
 		}
-		if event.MessageCode == MessageCodeComplete {
+		if event.IsComplete() {
 			break
 		}
 
-		return fmt.Errorf("unexpected message code: %s", event.MessageCode)
+		return fmt.Errorf("unexpected event")
 	}
 
 	return nil
@@ -168,23 +168,26 @@ func (c *Client) ListJobs(jobType JobType) ([]Job, error) {
 
 	var dataSegments []string
 	for event := range eventChan {
-		if event.MessageCode == MessageCodeComplete {
+		if event.IsComplete() {
 			continue
 		}
-		if event.MessageCode == MessageCodeDataMessage && event.Type == EventTypeData {
+		if event.Type == EventTypeData {
+			if event.IsDataMessage() {
+				dataSegments = event.Segments
+				continue
+			}
+
 			if dataSegments != nil {
 				dataSegments = append(dataSegments, event.Segments...)
 			}
 
-			dataSegments = event.Segments
-
-			// Break if complete
-			if !event.Incomplete {
-				break
+			if event.Incomplete {
+				continue
 			}
+			break
 		}
 
-		return nil, fmt.Errorf("unexpected message code: %s", event.MessageCode)
+		return nil, fmt.Errorf("unexpected event")
 	}
 
 	jobs := make([]Job, 0, len(dataSegments))
@@ -209,21 +212,32 @@ func (c *Client) ListCallLists() ([]string, error) {
 		return nil, fmt.Errorf("error while executing AGTListCallLists command: %w", err)
 	}
 
-	var dataEvent Event
+	var dataSegments []string
 	for event := range eventChan {
-		if event.MessageCode == MessageCodeComplete {
+		if event.IsComplete() {
 			continue
 		}
-		if event.MessageCode == MessageCodeDataMessage && event.Type == EventTypeData {
-			dataEvent = event
+		if event.Type == EventTypeData {
+			if event.IsDataMessage() {
+				dataSegments = event.Segments
+				continue
+			}
+
+			if dataSegments != nil {
+				dataSegments = append(dataSegments, event.Segments...)
+			}
+
+			if event.Incomplete {
+				continue
+			}
 			break
 		}
 
-		return nil, fmt.Errorf("unexpected message code: %s", event.MessageCode)
+		return nil, fmt.Errorf("unexpected event")
 	}
 
-	callLists := make([]string, 0, len(dataEvent.Segments))
-	for _, segment := range dataEvent.Segments {
+	callLists := make([]string, 0, len(dataSegments))
+	for _, segment := range dataSegments {
 		callLists = append(callLists, segment)
 	}
 
@@ -239,21 +253,32 @@ func (c *Client) ListCallFields(listName string) ([]string, error) {
 		return nil, fmt.Errorf("error while executing AGTListCallFields command: %w", err)
 	}
 
-	var dataEvent Event
+	var dataSegments []string
 	for event := range eventChan {
-		if event.MessageCode == MessageCodeComplete {
+		if event.IsComplete() {
 			continue
 		}
-		if event.MessageCode == MessageCodeDataMessage && event.Type == EventTypeData {
-			dataEvent = event
+		if event.Type == EventTypeData {
+			if event.IsDataMessage() {
+				dataSegments = event.Segments
+				continue
+			}
+
+			if dataSegments != nil {
+				dataSegments = append(dataSegments, event.Segments...)
+			}
+
+			if event.Incomplete {
+				continue
+			}
 			break
 		}
 
-		return nil, fmt.Errorf("unexpected message code: %s", event.MessageCode)
+		return nil, fmt.Errorf("unexpected event")
 	}
 
-	callFields := make([]string, 0, len(dataEvent.Segments))
-	for _, segment := range dataEvent.Segments {
+	callFields := make([]string, 0, len(dataSegments))
+	for _, segment := range dataSegments {
 		callFields = append(callFields, segment)
 	}
 
@@ -270,14 +295,14 @@ func (c *Client) AttachJob(jobName string) error {
 	}
 
 	for event := range eventChan {
-		if event.MessageCode == MessageCodePending {
+		if event.IsPending() {
 			continue
 		}
-		if event.MessageCode == MessageCodeComplete {
+		if event.IsComplete() {
 			break
 		}
 
-		return fmt.Errorf("unexpected message code: %s", event.MessageCode)
+		return fmt.Errorf("unexpected event")
 	}
 
 	return nil
@@ -299,21 +324,32 @@ func (c *Client) ListDataFields(listType ListType) ([]string, error) {
 		return nil, fmt.Errorf("error while executing AGTListDataFields command: %w", err)
 	}
 
-	var dataEvent Event
+	var dataSegments []string
 	for event := range eventChan {
-		if event.MessageCode == MessageCodeComplete {
+		if event.IsComplete() {
 			continue
 		}
-		if event.MessageCode == MessageCodeDataMessage && event.Type == EventTypeData {
-			dataEvent = event
+		if event.Type == EventTypeData {
+			if event.IsDataMessage() {
+				dataSegments = event.Segments
+				continue
+			}
+
+			if dataSegments != nil {
+				dataSegments = append(dataSegments, event.Segments...)
+			}
+
+			if event.Incomplete {
+				continue
+			}
 			break
 		}
 
-		return nil, fmt.Errorf("unexpected message code: %s", event.MessageCode)
+		return nil, fmt.Errorf("unexpected event")
 	}
 
-	dataFields := make([]string, 0, len(dataEvent.Segments))
-	for _, segment := range dataEvent.Segments {
+	dataFields := make([]string, 0, len(dataSegments))
+	for _, segment := range dataSegments {
 		dataFields = append(dataFields, segment)
 	}
 
@@ -331,11 +367,11 @@ func (c *Client) SetNotifyKeyField(listType ListType, fieldName string) error {
 	}
 
 	for event := range eventChan {
-		if event.MessageCode == MessageCodeComplete {
+		if event.IsComplete() {
 			break
 		}
 
-		return fmt.Errorf("unexpected message code: %s", event.MessageCode)
+		return fmt.Errorf("unexpected event")
 	}
 
 	return nil
@@ -352,11 +388,11 @@ func (c *Client) SetDataField(listType ListType, fieldName string) error {
 	}
 
 	for event := range eventChan {
-		if event.MessageCode == MessageCodeComplete {
+		if event.IsComplete() {
 			break
 		}
 
-		return fmt.Errorf("unexpected message code: %s", event.MessageCode)
+		return fmt.Errorf("unexpected event")
 	}
 
 	return nil
@@ -370,14 +406,14 @@ func (c *Client) AvailWork() error {
 	}
 
 	for event := range eventChan {
-		if event.MessageCode == MessageCodePending {
+		if event.IsPending() {
 			continue
 		}
-		if event.MessageCode == MessageCodeComplete {
+		if event.IsComplete() {
 			break
 		}
 
-		return fmt.Errorf("unexpected message code: %s", event.MessageCode)
+		return fmt.Errorf("unexpected event")
 	}
 
 	return nil
@@ -391,11 +427,11 @@ func (c *Client) ReadyNextItem() error {
 	}
 
 	for event := range eventChan {
-		if event.MessageCode == MessageCodeComplete {
+		if event.IsComplete() {
 			break
 		}
 
-		return fmt.Errorf("unexpected message code: %s", event.MessageCode)
+		return fmt.Errorf("unexpected event")
 	}
 
 	return nil
@@ -408,21 +444,32 @@ func (c *Client) ListKeys() ([]string, error) {
 		return nil, fmt.Errorf("error while executing AGTListKeys command: %w", err)
 	}
 
-	var dataEvent Event
+	var dataSegments []string
 	for event := range eventChan {
-		if event.MessageCode == MessageCodeComplete {
+		if event.IsComplete() {
 			continue
 		}
-		if event.MessageCode == MessageCodeDataMessage && event.Type == EventTypeData {
-			dataEvent = event
+		if event.Type == EventTypeData {
+			if event.IsDataMessage() {
+				dataSegments = event.Segments
+				continue
+			}
+
+			if dataSegments != nil {
+				dataSegments = append(dataSegments, event.Segments...)
+			}
+
+			if event.Incomplete {
+				continue
+			}
 			break
 		}
 
-		return nil, fmt.Errorf("unexpected message code: %s", event.MessageCode)
+		return nil, fmt.Errorf("unexpected event")
 	}
 
-	keys := make([]string, 0, len(dataEvent.Segments))
-	for _, segment := range dataEvent.Segments {
+	keys := make([]string, 0, len(dataSegments))
+	for _, segment := range dataSegments {
 		keys = append(keys, segment)
 	}
 
@@ -437,11 +484,11 @@ func (c *Client) DetachJob() error {
 	}
 
 	for event := range eventChan {
-		if event.MessageCode == MessageCodeComplete {
+		if event.IsComplete() {
 			break
 		}
 
-		return fmt.Errorf("unexpected message code: %s", event.MessageCode)
+		return fmt.Errorf("unexpected event")
 	}
 
 	return nil
@@ -455,14 +502,14 @@ func (c *Client) DisconnHeadset() error {
 	}
 
 	for event := range eventChan {
-		if event.MessageCode == MessageCodePending {
+		if event.IsPending() {
 			continue
 		}
-		if event.MessageCode == MessageCodeComplete {
+		if event.IsComplete() {
 			break
 		}
 
-		return fmt.Errorf("unexpected message code: %s", event.MessageCode)
+		return fmt.Errorf("unexpected event")
 	}
 
 	return nil
@@ -476,14 +523,14 @@ func (c *Client) FreeHeadset() error {
 	}
 
 	for event := range eventChan {
-		if event.MessageCode == MessageCodePending {
+		if event.IsPending() {
 			continue
 		}
-		if event.MessageCode == MessageCodeComplete {
+		if event.IsComplete() {
 			break
 		}
 
-		return fmt.Errorf("unexpected message code: %s", event.MessageCode)
+		return fmt.Errorf("unexpected event")
 	}
 
 	return nil
@@ -498,14 +545,14 @@ func (c *Client) Logoff() error {
 	}
 
 	for event := range eventChan {
-		if event.MessageCode == MessageCodePending {
+		if event.IsPending() {
 			continue
 		}
-		if event.MessageCode == MessageCodeComplete {
+		if event.IsComplete() {
 			break
 		}
 
-		return fmt.Errorf("unexpected message code: %s", event.MessageCode)
+		return fmt.Errorf("unexpected event")
 	}
 
 	return nil

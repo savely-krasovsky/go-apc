@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os"
 	"sync"
+	"syscall"
 
 	"gitlab.sovcombank.group/scb-mobile/lib/go-apc.git/pool"
 	"go.uber.org/zap"
@@ -35,7 +37,9 @@ func ProductionLogger() Option {
 type Client struct {
 	opts *Options
 
-	conn         net.Conn
+	conn net.Conn
+	br   *bufio.Reader
+
 	mu           sync.RWMutex
 	invokeIDPool *pool.InvokeIDPool
 	requests     map[uint32]chan Event
@@ -62,26 +66,27 @@ func NewClient(addr string, opts ...Option) (*Client, error) {
 		return nil, fmt.Errorf("error while dialing host: %w", err)
 	}
 
-	br := bufio.NewReaderSize(conn, 4096)
+	decoder := charmap.Windows1251.NewDecoder().Reader(conn)
+	br := bufio.NewReaderSize(decoder, 4096)
 
 	c := &Client{
 		opts:         options,
 		conn:         conn,
+		br:           br,
 		invokeIDPool: pool.NewInvokeIDPool(),
 		requests:     make(map[uint32]chan Event),
 	}
 
-	// Consume AGTSTART
-	event, err := c.consumeEvent(br)
+	// Read AGTSTART
+	event, err := c.readEvent()
 	if err != nil {
-		c.opts.Logger.Error("error while consuming an event", zap.Error(err))
+		c.opts.Logger.Error("error while reading an event", zap.Error(err))
 		return nil, err
 	}
 
 	// Check that first notification message is correct
 	if event.Keyword != "AGTSTART" ||
-		event.CommandStatus != 0 ||
-		event.MessageCode != "AGENT_STARTUP" {
+		!event.IsStart() {
 		c.opts.Logger.Error("server cannot accept new clients")
 		return nil, err
 	}
@@ -89,27 +94,24 @@ func NewClient(addr string, opts ...Option) (*Client, error) {
 	return c, nil
 }
 
-func (c *Client) consumeEvent(reader io.Reader) (Event, error) {
-	decoder := charmap.Windows1251.NewDecoder().Reader(reader)
-	br := bufio.NewReader(decoder)
-
-	var atom string
+func (c *Client) readEvent() (Event, error) {
+	var rawEvent string
 	for {
-		char, _, err := br.ReadRune()
+		char, _, err := c.br.ReadRune()
 		if err != nil {
 			return Event{}, err
 		}
 
-		atom += string(char)
+		rawEvent += string(char)
 
 		if char == ETX || char == ETB {
 			break
 		}
 	}
 
-	c.opts.Logger.Debug("event has received", zap.String("raw", atom))
+	c.opts.Logger.Debug("event has received", zap.String("raw", rawEvent))
 
-	event, err := decodeEvent(atom)
+	event, err := decodeEvent(rawEvent)
 	if err != nil {
 		return Event{}, err
 	}
@@ -121,39 +123,60 @@ func (c *Client) consumeEvent(reader io.Reader) (Event, error) {
 		zap.Uint32("process_id", event.ProcessID),
 		zap.Uint32("invoke_id", event.InvokeID),
 		zap.Strings("segments", event.Segments),
-		zap.Uint8("command_status", event.CommandStatus),
-		zap.String("message_code", string(event.MessageCode)),
+		zap.Bool("incomplete", event.Incomplete),
 	).Info("event has decoded")
 
 	return event, nil
 }
 
-func (c *Client) Start() {
-	defer c.conn.Close()
-	br := bufio.NewReader(c.conn)
-
-	for {
-		event, err := c.consumeEvent(br)
-		if err != nil {
-			// Logoff or connection closed
-			if err == io.EOF {
-				return
+func (c *Client) readOnce() (connected bool, err error) {
+	event, err := c.readEvent()
+	// Logoff or connection closed
+	if err == io.EOF {
+		return false, nil
+	} else if err != nil {
+		if opErr, ok := err.(*net.OpError); ok {
+			if syscallErr, ok := opErr.Err.(*os.SyscallError); ok {
+				if syscallErr.Err == syscall.ECONNRESET {
+					return false, nil
+				}
 			}
-
-			c.opts.Logger.Error("error while consuming an event", zap.Error(err))
-			continue
 		}
 
-		func() {
-			c.mu.RLock()
-			defer c.mu.RUnlock()
+		if IsDecodingError(err) {
+			return true, err
+		}
 
-			eventChan, ok := c.requests[event.InvokeID]
-			if !ok {
-				return
-			}
+		return false, err
+	}
 
-			eventChan <- event
-		}()
+	c.handleEvent(event)
+
+	return true, nil
+}
+
+func (c *Client) handleEvent(event Event) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	eventChan, ok := c.requests[event.InvokeID]
+	if !ok {
+		return
+	}
+
+	eventChan <- event
+}
+
+func (c *Client) Start() {
+	defer c.conn.Close()
+
+	for {
+		connected, err := c.readOnce()
+		if err != nil {
+			c.opts.Logger.Error("error while reading an event", zap.Error(err))
+		}
+		if !connected {
+			return
+		}
 	}
 }

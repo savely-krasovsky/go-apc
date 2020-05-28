@@ -40,11 +40,12 @@ func TestClient_ListJobs(t *testing.T) {
 	_ = jobs
 }
 
+/*
 func TestClient_AttachJob(t *testing.T) {
 	assert.NoError(t, client.AttachJob("TEST_DIT"))
 }
 
-/*
+
 func TestClient_ListCallLists(t *testing.T) {
 	lists, err := client.ListCallLists()
 	require.NoError(t, err)
@@ -85,7 +86,6 @@ func TestClient_ReadyNextItem(t *testing.T) {
 
 	time.Sleep(10 * time.Minute)
 }
-*/
 
 func TestClient_ListKeys(t *testing.T) {
 	keys, err := client.ListKeys()
@@ -97,6 +97,7 @@ func TestClient_ListKeys(t *testing.T) {
 func TestClient_DetachJob(t *testing.T) {
 	assert.NoError(t, client.DetachJob())
 }
+*/
 
 func TestClient_DisconnHeadset(t *testing.T) {
 	assert.NoError(t, client.DisconnHeadset())
