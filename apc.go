@@ -1,7 +1,6 @@
 package apc
 
 import (
-	"bufio"
 	"crypto/tls"
 	"fmt"
 	"io"
@@ -38,11 +37,13 @@ type Client struct {
 	opts *Options
 
 	conn net.Conn
-	br   *bufio.Reader
 
 	mu           sync.RWMutex
 	invokeIDPool *pool.InvokeIDPool
 	requests     map[uint32]chan Event
+
+	processID          uint32
+	notificationEvents chan Event
 }
 
 func NewClient(addr string, opts ...Option) (*Client, error) {
@@ -57,24 +58,24 @@ func NewClient(addr string, opts ...Option) (*Client, error) {
 
 	cert, err := tls.LoadX509KeyPair("agentClient_cert.pem", "agentClient_key.pem")
 	if err != nil {
-		panic(err)
+		return nil, fmt.Errorf("error while loading X509 key pair: %w", err)
+	}
+	config := tls.Config{
+		Certificates:       []tls.Certificate{cert},
+		InsecureSkipVerify: true,
 	}
 
-	config := tls.Config{Certificates: []tls.Certificate{cert}, InsecureSkipVerify: true}
 	conn, err := tls.Dial("tcp", addr, &config)
 	if err != nil {
-		return nil, fmt.Errorf("error while dialing host: %w", err)
+		return nil, fmt.Errorf("error while dialing TLS: %w", err)
 	}
 
-	decoder := charmap.Windows1251.NewDecoder().Reader(conn)
-	br := bufio.NewReaderSize(decoder, 4096)
-
 	c := &Client{
-		opts:         options,
-		conn:         conn,
-		br:           br,
-		invokeIDPool: pool.NewInvokeIDPool(),
-		requests:     make(map[uint32]chan Event),
+		opts:               options,
+		conn:               conn,
+		invokeIDPool:       pool.NewInvokeIDPool(),
+		requests:           make(map[uint32]chan Event),
+		notificationEvents: make(chan Event),
 	}
 
 	// Read AGTSTART
@@ -91,20 +92,44 @@ func NewClient(addr string, opts ...Option) (*Client, error) {
 		return nil, err
 	}
 
+	c.processID = event.ProcessID
+
 	return c, nil
 }
 
+func (c *Client) Start() {
+	defer close(c.notificationEvents)
+	defer c.conn.Close()
+
+	for {
+		connected, err := c.readOnce()
+		if err != nil {
+			c.opts.Logger.Error("error while reading an event", zap.Error(err))
+		}
+		if !connected {
+			return
+		}
+	}
+}
+
+func (c *Client) Notifications() <-chan Event {
+	return c.notificationEvents
+}
+
 func (c *Client) readEvent() (Event, error) {
+	decoder := charmap.Windows1251.NewDecoder().Reader(c.conn)
+
 	var rawEvent string
 	for {
-		char, _, err := c.br.ReadRune()
+		buf := make([]byte, 4096)
+		n, err := decoder.Read(buf)
 		if err != nil {
 			return Event{}, err
 		}
 
-		rawEvent += string(char)
+		rawEvent = string(buf[:n])
 
-		if char == ETX || char == ETB {
+		if buf[n-1] == ETX || buf[n-1] == ETB {
 			break
 		}
 	}
@@ -133,17 +158,20 @@ func (c *Client) readOnce() (connected bool, err error) {
 	event, err := c.readEvent()
 	// Logoff or connection closed
 	if err == io.EOF {
+		c.opts.Logger.Error("got EOF", zap.Error(err))
 		return false, nil
 	} else if err != nil {
 		if opErr, ok := err.(*net.OpError); ok {
 			if syscallErr, ok := opErr.Err.(*os.SyscallError); ok {
 				if syscallErr.Err == syscall.ECONNRESET {
+					c.opts.Logger.Error("got ECONNRESET", zap.Error(err))
 					return false, nil
 				}
 			}
 		}
 
 		if IsDecodingError(err) {
+			c.opts.Logger.Error("got decoding err", zap.Error(err))
 			return true, err
 		}
 
@@ -151,7 +179,6 @@ func (c *Client) readOnce() (connected bool, err error) {
 	}
 
 	c.handleEvent(event)
-
 	return true, nil
 }
 
@@ -159,24 +186,15 @@ func (c *Client) handleEvent(event Event) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
+	if event.Type == EventTypeNotification {
+		c.notificationEvents <- event
+		return
+	}
+
 	eventChan, ok := c.requests[event.InvokeID]
 	if !ok {
 		return
 	}
 
 	eventChan <- event
-}
-
-func (c *Client) Start() {
-	defer c.conn.Close()
-
-	for {
-		connected, err := c.readOnce()
-		if err != nil {
-			c.opts.Logger.Error("error while reading an event", zap.Error(err))
-		}
-		if !connected {
-			return
-		}
-	}
 }

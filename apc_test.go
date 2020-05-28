@@ -30,7 +30,7 @@ func TestClient_ReserveHeadset(t *testing.T) {
 }
 
 func TestClient_ConnHeadset(t *testing.T) {
-	assert.NoError(t, client.ConnHeadset())
+	assert.NoError(t, client.ConnectHeadset())
 }
 
 func TestClient_ListJobs(t *testing.T) {
@@ -85,7 +85,7 @@ func TestClient_ReadyNextItem(t *testing.T) {
 
 	time.Sleep(10 * time.Minute)
 }
- */
+*/
 
 func TestClient_ListKeys(t *testing.T) {
 	keys, err := client.ListKeys()
@@ -99,7 +99,7 @@ func TestClient_DetachJob(t *testing.T) {
 }
 
 func TestClient_DisconnHeadset(t *testing.T) {
-	assert.NoError(t, client.DisconnHeadset())
+	assert.NoError(t, client.DisconnectHeadset())
 }
 
 func TestClient_FreeHeadset(t *testing.T) {

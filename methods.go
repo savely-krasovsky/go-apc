@@ -8,23 +8,40 @@ import (
 	"go.uber.org/zap"
 )
 
-func (c *Client) invokeCommand(keyword string, args map[string]string) (<-chan Event, uint32, error) {
+type arg struct {
+	key   string
+	value string
+}
+
+func newArg(key, value string) arg {
+	return arg{
+		key:   key,
+		value: value,
+	}
+}
+
+func (c *Client) invokeCommand(keyword string, args ...arg) (<-chan Event, uint32, error) {
+	processID := c.processID
 	invokeID := c.invokeIDPool.Get()
 
 	zapFields := make([]zap.Field, 0, len(args)+2)
-	zapFields = append(zapFields, zap.String("keyword", keyword), zap.Uint32("invoke_id", invokeID))
+	zapFields = append(zapFields,
+		zap.String("keyword", keyword),
+		zap.Uint32("process_id", processID),
+		zap.Uint32("invoke_id", invokeID),
+	)
 
 	var flatArgs []string
 	if len(args) > 0 {
 		flatArgs = make([]string, 0, len(args))
-		for name, arg := range args {
-			flatArgs = append(flatArgs, arg)
-			zapFields = append(zapFields, zap.String(name, arg))
+		for _, arg := range args {
+			flatArgs = append(flatArgs, arg.value)
+			zapFields = append(zapFields, zap.String(arg.key, arg.value))
 		}
 	}
 
 	// Encode command
-	b, err := encodeCommand(keyword, invokeID, flatArgs...)
+	b, err := encodeCommand(keyword, processID, invokeID, flatArgs...)
 	if err != nil {
 		return nil, invokeID, fmt.Errorf("cannot encode command: %w", err)
 	}
@@ -67,10 +84,11 @@ func (c *Client) destroyCommand(invokeID uint32) {
 }
 
 func (c *Client) Logon(agentName string, password string) error {
-	eventChan, invokeID, err := c.invokeCommand("AGTLogon", map[string]string{
-		"agent_name": agentName,
-		"password":   password,
-	})
+	eventChan, invokeID, err := c.invokeCommand(
+		"AGTLogon",
+		newArg("agent_name", agentName),
+		newArg("password", password),
+	)
 	defer c.destroyCommand(invokeID)
 	if err != nil {
 		return fmt.Errorf("error while executing AGTLogon command: %w", err)
@@ -91,9 +109,10 @@ func (c *Client) Logon(agentName string, password string) error {
 }
 
 func (c *Client) ReserveHeadset(headsetID int) error {
-	eventChan, invokeID, err := c.invokeCommand("AGTReserveHeadset", map[string]string{
-		"headset_id": strconv.Itoa(headsetID),
-	})
+	eventChan, invokeID, err := c.invokeCommand(
+		"AGTReserveHeadset",
+		newArg("headset_id", strconv.Itoa(headsetID)),
+	)
 	defer c.destroyCommand(invokeID)
 	if err != nil {
 		return fmt.Errorf("error while executing AGTReserveHeadset command: %w", err)
@@ -113,8 +132,8 @@ func (c *Client) ReserveHeadset(headsetID int) error {
 	return nil
 }
 
-func (c *Client) ConnHeadset() error {
-	eventChan, invokeID, err := c.invokeCommand("AGTConnHeadset", nil)
+func (c *Client) ConnectHeadset() error {
+	eventChan, invokeID, err := c.invokeCommand("AGTConnHeadset")
 	defer c.destroyCommand(invokeID)
 	if err != nil {
 		return fmt.Errorf("error while executing AGTConnHeadset command: %w", err)
@@ -158,9 +177,10 @@ const (
 )
 
 func (c *Client) ListJobs(jobType JobType) ([]Job, error) {
-	eventChan, invokeID, err := c.invokeCommand("AGTListJobs", map[string]string{
-		"job_type": string([]byte{byte(jobType)}),
-	})
+	eventChan, invokeID, err := c.invokeCommand(
+		"AGTListJobs",
+		newArg("job_type", string([]byte{byte(jobType)})),
+	)
 	defer c.destroyCommand(invokeID)
 	if err != nil {
 		return nil, fmt.Errorf("error while executing AGTListJobs command: %w", err)
@@ -198,7 +218,7 @@ func (c *Client) ListJobs(jobType JobType) ([]Job, error) {
 }
 
 func (c *Client) ListCallLists() ([]string, error) {
-	eventChan, invokeID, err := c.invokeCommand("AGTListCallLists", nil)
+	eventChan, invokeID, err := c.invokeCommand("AGTListCallLists")
 	defer c.destroyCommand(invokeID)
 	if err != nil {
 		return nil, fmt.Errorf("error while executing AGTListCallLists command: %w", err)
@@ -229,9 +249,10 @@ func (c *Client) ListCallLists() ([]string, error) {
 }
 
 func (c *Client) ListCallFields(listName string) ([]string, error) {
-	eventChan, invokeID, err := c.invokeCommand("AGTListCallFields", map[string]string{
-		"list_name": listName,
-	})
+	eventChan, invokeID, err := c.invokeCommand(
+		"AGTListCallFields",
+		newArg("list_name", listName),
+	)
 	defer c.destroyCommand(invokeID)
 	if err != nil {
 		return nil, fmt.Errorf("error while executing AGTListCallFields command: %w", err)
@@ -262,9 +283,10 @@ func (c *Client) ListCallFields(listName string) ([]string, error) {
 }
 
 func (c *Client) AttachJob(jobName string) error {
-	eventChan, invokeID, err := c.invokeCommand("AGTAttachJob", map[string]string{
-		"job_name": jobName,
-	})
+	eventChan, invokeID, err := c.invokeCommand(
+		"AGTAttachJob",
+		newArg("job_name", jobName),
+	)
 	defer c.destroyCommand(invokeID)
 	if err != nil {
 		return fmt.Errorf("error while executing AGTAttachJob command: %w", err)
@@ -291,10 +313,15 @@ const (
 	ListTypeInbound  ListType = 'I'
 )
 
-func (c *Client) ListDataFields(listType ListType) ([]string, error) {
-	eventChan, invokeID, err := c.invokeCommand("AGTListDataFields", map[string]string{
-		"list_type": string([]byte{byte(listType)}),
-	})
+type DataField struct {
+	Name string
+}
+
+func (c *Client) ListDataFields(listType ListType) ([]DataField, error) {
+	eventChan, invokeID, err := c.invokeCommand(
+		"AGTListDataFields",
+		newArg("list_type", string([]byte{byte(listType)})),
+	)
 	defer c.destroyCommand(invokeID)
 	if err != nil {
 		return nil, fmt.Errorf("error while executing AGTListDataFields command: %w", err)
@@ -316,19 +343,25 @@ func (c *Client) ListDataFields(listType ListType) ([]string, error) {
 		return nil, fmt.Errorf("unexpected event")
 	}
 
-	dataFields := make([]string, 0, len(dataSegments))
+	dataFields := make([]DataField, 0, len(dataSegments))
 	for _, segment := range dataSegments {
-		dataFields = append(dataFields, segment)
+		dataFieldParts := strings.Split(segment, ",")
+		if len(dataFieldParts) == 4 {
+			dataFields = append(dataFields, DataField{
+				Name: dataFieldParts[0],
+			})
+		}
 	}
 
 	return dataFields, nil
 }
 
 func (c *Client) SetNotifyKeyField(listType ListType, fieldName string) error {
-	eventChan, invokeID, err := c.invokeCommand("AGTSetNotifyKeyField", map[string]string{
-		"list_type":  string([]byte{byte(listType)}),
-		"field_name": fieldName,
-	})
+	eventChan, invokeID, err := c.invokeCommand(
+		"AGTSetNotifyKeyField",
+		newArg("list_type", string([]byte{byte(listType)})),
+		newArg("field_name", fieldName),
+	)
 	defer c.destroyCommand(invokeID)
 	if err != nil {
 		return fmt.Errorf("error while executing AGTSetNotifyKeyField command: %w", err)
@@ -346,10 +379,11 @@ func (c *Client) SetNotifyKeyField(listType ListType, fieldName string) error {
 }
 
 func (c *Client) SetDataField(listType ListType, fieldName string) error {
-	eventChan, invokeID, err := c.invokeCommand("AGTSetDataField", map[string]string{
-		"list_type":  string([]byte{byte(listType)}),
-		"field_name": fieldName,
-	})
+	eventChan, invokeID, err := c.invokeCommand(
+		"AGTSetDataField",
+		newArg("list_type", string([]byte{byte(listType)})),
+		newArg("field_name", fieldName),
+	)
 	defer c.destroyCommand(invokeID)
 	if err != nil {
 		return fmt.Errorf("error while executing AGTSetDataField command: %w", err)
@@ -367,7 +401,7 @@ func (c *Client) SetDataField(listType ListType, fieldName string) error {
 }
 
 func (c *Client) AvailWork() error {
-	eventChan, invokeID, err := c.invokeCommand("AGTAvailWork", nil)
+	eventChan, invokeID, err := c.invokeCommand("AGTAvailWork")
 	defer c.destroyCommand(invokeID)
 	if err != nil {
 		return fmt.Errorf("error while executing AGTAvailWork command: %w", err)
@@ -388,7 +422,7 @@ func (c *Client) AvailWork() error {
 }
 
 func (c *Client) ReadyNextItem() error {
-	eventChan, invokeID, err := c.invokeCommand("AGTReadyNextItem", nil)
+	eventChan, invokeID, err := c.invokeCommand("AGTReadyNextItem")
 	defer c.destroyCommand(invokeID)
 	if err != nil {
 		return fmt.Errorf("error while executing AGTReadyNextItem command: %w", err)
@@ -406,7 +440,7 @@ func (c *Client) ReadyNextItem() error {
 }
 
 func (c *Client) ListKeys() ([]string, error) {
-	eventChan, invokeID, err := c.invokeCommand("AGTListKeys", nil)
+	eventChan, invokeID, err := c.invokeCommand("AGTListKeys")
 	defer c.destroyCommand(invokeID)
 	if err != nil {
 		return nil, fmt.Errorf("error while executing AGTListKeys command: %w", err)
@@ -436,8 +470,74 @@ func (c *Client) ListKeys() ([]string, error) {
 	return keys, nil
 }
 
+func (c *Client) ReleaseLine() error {
+	eventChan, invokeID, err := c.invokeCommand("AGTReleaseLine")
+	defer c.destroyCommand(invokeID)
+	if err != nil {
+		return fmt.Errorf("error while executing AGTReleaseLine command: %w", err)
+	}
+
+	for event := range eventChan {
+		if event.IsPending() {
+			continue
+		}
+		if event.IsComplete() {
+			break
+		}
+
+		return fmt.Errorf("unexpected event")
+	}
+
+	return nil
+}
+
+func (c *Client) FinishedItem(compCode int) error {
+	eventChan, invokeID, err := c.invokeCommand(
+		"AGTFinishedItem",
+		newArg("comp_code", strconv.Itoa(compCode)),
+	)
+	defer c.destroyCommand(invokeID)
+	if err != nil {
+		return fmt.Errorf("error while executing AGTFinishedItem command: %w", err)
+	}
+
+	for event := range eventChan {
+		if event.IsPending() {
+			continue
+		}
+		if event.IsComplete() {
+			break
+		}
+
+		return fmt.Errorf("unexpected event")
+	}
+
+	return nil
+}
+
+func (c *Client) NoFurtherWork() error {
+	eventChan, invokeID, err := c.invokeCommand("AGTNoFurtherWork")
+	defer c.destroyCommand(invokeID)
+	if err != nil {
+		return fmt.Errorf("error while executing AGTNoFurtherWork command: %w", err)
+	}
+
+	for event := range eventChan {
+		if event.IsPending() {
+			continue
+		}
+		if event.IsComplete() {
+			break
+		}
+
+		return fmt.Errorf("unexpected event")
+	}
+
+	return nil
+}
+
 func (c *Client) DetachJob() error {
-	eventChan, invokeID, err := c.invokeCommand("AGTDetachJob", nil)
+	eventChan, invokeID, err := c.invokeCommand("AGTDetachJob")
 	defer c.destroyCommand(invokeID)
 	if err != nil {
 		return fmt.Errorf("error while executing AGTDetachJob command: %w", err)
@@ -454,8 +554,8 @@ func (c *Client) DetachJob() error {
 	return nil
 }
 
-func (c *Client) DisconnHeadset() error {
-	eventChan, invokeID, err := c.invokeCommand("AGTDisconnHeadset", nil)
+func (c *Client) DisconnectHeadset() error {
+	eventChan, invokeID, err := c.invokeCommand("AGTDisconnHeadset")
 	defer c.destroyCommand(invokeID)
 	if err != nil {
 		return fmt.Errorf("error while executing AGTDisconnHeadset command: %w", err)
@@ -476,7 +576,7 @@ func (c *Client) DisconnHeadset() error {
 }
 
 func (c *Client) FreeHeadset() error {
-	eventChan, invokeID, err := c.invokeCommand("AGTFreeHeadset", nil)
+	eventChan, invokeID, err := c.invokeCommand("AGTFreeHeadset")
 	defer c.destroyCommand(invokeID)
 	if err != nil {
 		return fmt.Errorf("error while executing AGTFreeHeadset command: %w", err)
@@ -498,7 +598,7 @@ func (c *Client) FreeHeadset() error {
 
 // Logoff sends ATGLogoff command, then Proactive Control server terminates session
 func (c *Client) Logoff() error {
-	eventChan, invokeID, err := c.invokeCommand("AGTLogoff", nil)
+	eventChan, invokeID, err := c.invokeCommand("AGTLogoff")
 	defer c.destroyCommand(invokeID)
 	if err != nil {
 		return fmt.Errorf("error while executing AGTLogoff command: %w", err)
