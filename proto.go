@@ -10,11 +10,11 @@ import (
 
 const (
 	// Message separator
-	RS rune = 0x1E
+	RS byte = 0x1E
 	// Incomplete message separator
-	ETB rune = 0x17
+	ETB byte = 0x17
 	// End of text
-	ETX rune = 0x03
+	ETX byte = 0x03
 )
 
 type EventType byte
@@ -78,10 +78,13 @@ func (e Event) IsPending() bool {
 	return true
 }
 
-func encodeCommand(keyword string, invokeID uint32, args ...string) ([]byte, error) {
+func encodeCommand(keyword string, processID, invokeID uint32, args ...string) ([]byte, error) {
 	// Checks
 	if len(keyword) > 20 {
 		return nil, errors.New("keyword should be less or equal to 20 bytes")
+	}
+	if len(strconv.Itoa(int(processID))) > 6 {
+		return nil, errors.New("process id should be less or equal to 6 bytes")
 	}
 	if len(strconv.Itoa(int(invokeID))) > 4 {
 		return nil, errors.New("invoke id should be less or equal to 4 bytes")
@@ -99,7 +102,7 @@ func encodeCommand(keyword string, invokeID uint32, args ...string) ([]byte, err
 	buf.WriteString(fmt.Sprintf("%-20s", "Golang"))
 
 	// Process ID; 6 bytes
-	buf.WriteString(fmt.Sprintf("%-6d", 0))
+	buf.WriteString(fmt.Sprintf("%-6d", processID))
 
 	// Invoke ID; 4 bytes
 	buf.WriteString(fmt.Sprintf("%-4d", invokeID))
@@ -108,16 +111,16 @@ func encodeCommand(keyword string, invokeID uint32, args ...string) ([]byte, err
 	buf.WriteString(fmt.Sprintf("%-4d", len(args)))
 
 	if len(args) > 0 {
-		buf.WriteByte(byte(RS))
+		buf.WriteByte(RS)
 		for i, arg := range args {
 			buf.WriteString(arg)
 
 			if len(args)-1 != i {
-				buf.WriteByte(byte(RS))
+				buf.WriteByte(RS)
 			}
 		}
 	}
-	buf.WriteByte(byte(ETX))
+	buf.WriteByte(ETX)
 
 	return buf.Bytes(), nil
 }
