@@ -172,15 +172,7 @@ func (c *Client) ListJobs(jobType JobType) ([]Job, error) {
 			continue
 		}
 		if event.Type == EventTypeData {
-			if event.IsDataMessage() {
-				dataSegments = event.Segments
-				continue
-			}
-
-			if dataSegments != nil {
-				dataSegments = append(dataSegments, event.Segments...)
-			}
-
+			dataSegments = append(dataSegments, event.Segments...)
 			if event.Incomplete {
 				continue
 			}
@@ -218,15 +210,7 @@ func (c *Client) ListCallLists() ([]string, error) {
 			continue
 		}
 		if event.Type == EventTypeData {
-			if event.IsDataMessage() {
-				dataSegments = event.Segments
-				continue
-			}
-
-			if dataSegments != nil {
-				dataSegments = append(dataSegments, event.Segments...)
-			}
-
+			dataSegments = append(dataSegments, event.Segments...)
 			if event.Incomplete {
 				continue
 			}
@@ -259,15 +243,7 @@ func (c *Client) ListCallFields(listName string) ([]string, error) {
 			continue
 		}
 		if event.Type == EventTypeData {
-			if event.IsDataMessage() {
-				dataSegments = event.Segments
-				continue
-			}
-
-			if dataSegments != nil {
-				dataSegments = append(dataSegments, event.Segments...)
-			}
-
+			dataSegments = append(dataSegments, event.Segments...)
 			if event.Incomplete {
 				continue
 			}
@@ -330,15 +306,7 @@ func (c *Client) ListDataFields(listType ListType) ([]string, error) {
 			continue
 		}
 		if event.Type == EventTypeData {
-			if event.IsDataMessage() {
-				dataSegments = event.Segments
-				continue
-			}
-
-			if dataSegments != nil {
-				dataSegments = append(dataSegments, event.Segments...)
-			}
-
+			dataSegments = append(dataSegments, event.Segments...)
 			if event.Incomplete {
 				continue
 			}
@@ -450,15 +418,7 @@ func (c *Client) ListKeys() ([]string, error) {
 			continue
 		}
 		if event.Type == EventTypeData {
-			if event.IsDataMessage() {
-				dataSegments = event.Segments
-				continue
-			}
-
-			if dataSegments != nil {
-				dataSegments = append(dataSegments, event.Segments...)
-			}
-
+			dataSegments = append(dataSegments, event.Segments...)
 			if event.Incomplete {
 				continue
 			}
