@@ -28,51 +28,54 @@ const (
 	EventTypeNotification EventType = 'N'
 )
 
-type MessageCode string
-
-const (
-	MessageCodeComplete    MessageCode = "M00000"
-	MessageCodeDataMessage MessageCode = "M00001"
-	MessageCodePending     MessageCode = "S28833"
-)
-
-type MessageCodeType byte
-
-const (
-	MessageCodeTypeMessage MessageCodeType = 'M'
-	MessageCodeTypeError   MessageCodeType = 'E'
-	MessageCodeTypeStatus  MessageCodeType = 'S'
-)
-
-func (mc MessageCode) Type() MessageCodeType {
-	if len(mc) < 1 {
-		return 0
-	}
-
-	switch {
-	case mc[0] == byte(MessageCodeTypeMessage):
-		return MessageCodeTypeMessage
-	case mc[0] == byte(MessageCodeTypeError):
-		return MessageCodeTypeError
-	case mc[0] == byte(MessageCodeTypeStatus):
-		return MessageCodeTypeStatus
-	}
-
-	return 0
+type Event struct {
+	Keyword    string
+	Type       EventType
+	Client     string
+	ProcessID  uint32
+	InvokeID   uint32
+	Segments   []string
+	Incomplete bool
 }
 
-type Event struct {
-	Keyword   string
-	Type      EventType
-	Client    string
-	ProcessID uint32
-	InvokeID  uint32
-	Segments  []string
+func (e Event) IsStart() bool {
+	if len(e.Segments) < 2 ||
+		e.Segments[0] != "0" ||
+		e.Segments[1] != "AGENT_STARTUP" {
+		return false
+	}
 
-	CommandStatus uint8
-	MessageCode   MessageCode
+	return true
+}
 
-	Incomplete bool
+func (e Event) IsComplete() bool {
+	if len(e.Segments) < 2 ||
+		e.Segments[0] != "0" ||
+		e.Segments[1] != "M00000" {
+		return false
+	}
+
+	return true
+}
+
+func (e Event) IsDataMessage() bool {
+	if len(e.Segments) < 2 ||
+		e.Segments[0] != "0" ||
+		e.Segments[1] != "M00001" {
+		return false
+	}
+
+	return true
+}
+
+func (e Event) IsPending() bool {
+	if len(e.Segments) < 2 ||
+		e.Segments[0] != "0" ||
+		e.Segments[1] != "S28833" {
+		return false
+	}
+
+	return true
 }
 
 func encodeCommand(keyword string, invokeID uint32, args ...string) ([]byte, error) {
@@ -119,36 +122,49 @@ func encodeCommand(keyword string, invokeID uint32, args ...string) ([]byte, err
 	return buf.Bytes(), nil
 }
 
-func decodeEvent(atom string) (event Event, err error) {
-	if len(atom) < 56 {
-		return Event{}, errors.New("event len should be less or equal to 55 bytes")
+type decodingError struct {
+	error
+}
+
+func newDecodingError(text string) error {
+	return &decodingError{errors.New(text)}
+}
+
+func IsDecodingError(err error) bool {
+	_, ok := err.(*decodingError)
+	return ok
+}
+
+func decodeEvent(raw string) (event Event, err error) {
+	if len(raw) < 56 {
+		return Event{}, newDecodingError("event len should be less or equal to 55 bytes")
 	}
 
 	event = Event{
-		Keyword: strings.TrimSpace(atom[:20]),
-		Type:    EventType(atom[20]),
-		Client:  strings.TrimSpace(atom[21:41]),
+		Keyword: strings.TrimSpace(raw[:20]),
+		Type:    EventType(raw[20]),
+		Client:  strings.TrimSpace(raw[21:41]),
 	}
 
-	processID, err := strconv.Atoi(strings.TrimSpace(atom[41:47]))
+	processID, err := strconv.Atoi(strings.TrimSpace(raw[41:47]))
 	if err != nil {
-		return Event{}, err
+		return Event{}, newDecodingError("cannot parse process id as int")
 	}
 	event.ProcessID = uint32(processID)
 
-	invokeID, err := strconv.Atoi(strings.TrimSpace(atom[47:51]))
+	invokeID, err := strconv.Atoi(strings.TrimSpace(raw[47:51]))
 	if err != nil {
-		return Event{}, err
+		return Event{}, newDecodingError("cannot parse invoke id as int")
 	}
 	event.InvokeID = uint32(invokeID)
 
-	numberOfSegments, err := strconv.Atoi(strings.TrimSpace(atom[51:55]))
+	numberOfSegments, err := strconv.Atoi(strings.TrimSpace(raw[51:55]))
 	if err != nil {
-		return Event{}, err
+		return Event{}, newDecodingError("cannot parse number of segments as int")
 	}
 
-	if numberOfSegments > 0 && len(atom) > 56 {
-		segments := strings.Split(atom[56:], string(RS))
+	if numberOfSegments > 0 && len(raw) > 56 {
+		segments := strings.Split(raw[56:], string(RS))
 		for i, s := range segments {
 			// Trim last byte if it reached the end
 			if i == len(segments)-1 {
@@ -161,31 +177,6 @@ func decodeEvent(atom string) (event Event, err error) {
 					s = strings.TrimSuffix(s, string(ETX))
 				}
 			}
-
-			// Read command status and message code
-			switch i {
-			case 0:
-				t, err := strconv.Atoi(s)
-				if err != nil {
-					return Event{}, err
-				}
-				event.CommandStatus = uint8(t)
-				continue
-			case 1:
-				event.MessageCode = MessageCode(s)
-				continue
-			}
-
-			// Workaround: strip continue messages
-			if j := strings.Index(s, string(ETB)); j != -1 {
-				s = s[:j]
-			}
-
-			// Some responses may have windows-1251 encoded strings, so do some decoding
-			/*s, err := charmap.Windows1251.NewDecoder().Bytes(s)
-			if err != nil {
-				return Event{}, err
-			}*/
 
 			event.Segments = append(event.Segments, s)
 		}
