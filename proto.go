@@ -78,13 +78,10 @@ func (e Event) IsPending() bool {
 	return true
 }
 
-func encodeCommand(keyword string, processID, invokeID uint32, args ...string) ([]byte, error) {
+func encodeCommand(keyword string, invokeID uint32, args ...string) ([]byte, error) {
 	// Checks
 	if len(keyword) > 20 {
 		return nil, errors.New("keyword should be less or equal to 20 bytes")
-	}
-	if len(strconv.Itoa(int(processID))) > 6 {
-		return nil, errors.New("process id should be less or equal to 6 bytes")
 	}
 	if len(strconv.Itoa(int(invokeID))) > 4 {
 		return nil, errors.New("invoke id should be less or equal to 4 bytes")
@@ -102,7 +99,7 @@ func encodeCommand(keyword string, processID, invokeID uint32, args ...string) (
 	buf.WriteString(fmt.Sprintf("%-20s", "Golang"))
 
 	// Process ID; 6 bytes
-	buf.WriteString(fmt.Sprintf("%-6d", processID))
+	buf.WriteString(fmt.Sprintf("%-6d", 0))
 
 	// Invoke ID; 4 bytes
 	buf.WriteString(fmt.Sprintf("%-4d", invokeID))
