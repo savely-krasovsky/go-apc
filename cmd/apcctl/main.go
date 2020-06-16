@@ -64,7 +64,7 @@ func main() {
 		}
 	}()
 
-	if err := client.AttachJob(jobName); err != nil {
+	/*if err := client.AttachJob(jobName); err != nil {
 		panic(err)
 	}
 	defer func() {
@@ -115,7 +115,7 @@ func main() {
 
 	if err := client.ReadyNextItem(); err != nil {
 		log.Println(err)
-	}
+	}*/
 
 	// Graceful shutdown block
 	sig := make(chan os.Signal, 1)
