@@ -834,8 +834,16 @@ el:
 	for {
 		select {
 		case event := <-r.eventChan:
-			if len(event.Segments) == 2 && event.Segments[0] == "0" {
-				state = State(event.Segments[1])
+			if len(event.Segments) == 2 &&
+				event.Segments[0] == "0" &&
+				strings.HasPrefix(event.Segments[1], "S") {
+				if strings.HasPrefix(event.Segments[1], "S70004") {
+					state = State(event.Segments[1])
+					continue
+				}
+
+				parts := strings.Split(event.Segments[1], ",")
+				state = State(parts[0])
 				continue
 			}
 
