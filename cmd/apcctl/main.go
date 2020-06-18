@@ -66,7 +66,7 @@ func main() {
 
 	client.ListCallLists()
 
-	/*if err := client.AttachJob(jobName); err != nil {
+	/* if err := client.AttachJob(jobName); err != nil {
 		panic(err)
 	}
 	defer func() {

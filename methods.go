@@ -810,3 +810,44 @@ el:
 
 	return nil
 }
+
+type State string
+
+const (
+	StateOnCall         State = "S70000"
+	StateReadyForCall   State = "S70001"
+	StateHasJoinedJob   State = "S70002"
+	StateHasSelectedJob State = "S70003"
+	StateLoggedOn       State = "S70004"
+)
+
+func (c *Client) ListState() (State, error) {
+	r, invokeID, err := c.invokeCommand("AGTListState")
+	defer c.destroyCommand(invokeID)
+	if err != nil {
+		return "", fmt.Errorf("error while executing AGTListState command: %w", err)
+	}
+
+	var state State
+
+el:
+	for {
+		select {
+		case event := <-r.eventChan:
+			if len(event.Segments) == 2 && event.Segments[0] == "0" {
+				state = State(event.Segments[1])
+				continue
+			}
+
+			if event.IsComplete() {
+				break el
+			}
+
+			return "", fmt.Errorf("unexpected event")
+		case <-r.done:
+			return "", context.Canceled
+		}
+	}
+
+	return state, nil
+}
