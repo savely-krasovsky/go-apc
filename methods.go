@@ -86,9 +86,6 @@ func (c *Client) destroyCommand(invokeID uint32) {
 	delete(c.requests, invokeID)
 	c.mu.Unlock()
 
-	// Close request event channel
-	close(request.eventChan)
-
 	// Finally release invoke ID
 	c.invokeIDPool.Release(invokeID)
 }
