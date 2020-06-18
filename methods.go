@@ -48,14 +48,14 @@ func (c *Client) invokeCommand(keyword string, args ...arg) (*request, uint32, e
 	if err != nil {
 		return nil, invokeID, fmt.Errorf("cannot encode command: %w", err)
 	}
-	c.opts.Logger.Debug("command has encoded", zap.ByteString("raw", b))
+	c.opts.Logger.Debug("Command has encoded.", zap.ByteString("raw", b))
 
 	// Write command to connection
 	if _, err := c.conn.Write(b); err != nil {
 		return nil, invokeID, fmt.Errorf("cannot write command: %w", err)
 	}
 
-	c.opts.Logger.With(zapFields...).Info("command has sent")
+	c.opts.Logger.With(zapFields...).Info("Command has sent.")
 
 	// Create dedicated event channel for this request
 	r := &request{
