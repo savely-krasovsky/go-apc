@@ -142,7 +142,7 @@ func NewClient(addr string, opts ...Option) (*Client, error) {
 	// Check that first notification message is correct
 	if event.Keyword != "AGTSTART" ||
 		!event.IsStart() {
-		c.opts.Logger.Error("server cannot accept new clients")
+		c.opts.Logger.Error("Server cannot accept new clients!")
 		return nil, err
 	}
 
@@ -241,7 +241,7 @@ func (c *Client) readEvents() error {
 				zap.Uint32("invoke_id", event.InvokeID),
 				zap.Strings("segments", event.Segments),
 				zap.Bool("incomplete", event.Incomplete),
-			).Info("event has decoded")
+			).Info("Event has decoded.")
 
 			c.events <- event
 		}
