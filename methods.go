@@ -71,9 +71,9 @@ func (c *Client) invokeCommand(keyword string, args ...arg) (*request, uint32, e
 }
 
 func (c *Client) destroyCommand(invokeID uint32) {
-	c.mu.Lock()
+	c.mu.RLock()
 	request, ok := c.requests[invokeID]
-	c.mu.Unlock()
+	c.mu.RUnlock()
 
 	// in case of executeCommand func returned an error just release invoke id from pool
 	if !ok {
@@ -81,12 +81,15 @@ func (c *Client) destroyCommand(invokeID uint32) {
 		return
 	}
 
-	close(request.eventChan)
-
+	// Delete request from pool
 	c.mu.Lock()
 	delete(c.requests, invokeID)
 	c.mu.Unlock()
 
+	// Close request event channel
+	close(request.eventChan)
+
+	// Finally release invoke ID
 	c.invokeIDPool.Release(invokeID)
 }
 
