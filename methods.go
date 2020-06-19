@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-
-	"go.uber.org/zap"
 )
 
 type arg struct {
@@ -28,18 +26,17 @@ func (c *Client) invokeCommand(keyword string, args ...arg) (*request, uint32, e
 		return nil, invokeID, ErrConnectionClosed
 	}
 
-	zapFields := make([]zap.Field, 0, len(args)+2)
-	zapFields = append(zapFields,
-		zap.String("keyword", keyword),
-		zap.Uint32("invoke_id", invokeID),
-	)
+	fields := map[string]interface{}{
+		"keyword":   keyword,
+		"invoke_id": invokeID,
+	}
 
 	var flatArgs []string
 	if len(args) > 0 {
 		flatArgs = make([]string, 0, len(args))
 		for _, arg := range args {
 			flatArgs = append(flatArgs, arg.value)
-			zapFields = append(zapFields, zap.String(arg.key, arg.value))
+			fields[arg.key] = arg.value
 		}
 	}
 
@@ -48,14 +45,14 @@ func (c *Client) invokeCommand(keyword string, args ...arg) (*request, uint32, e
 	if err != nil {
 		return nil, invokeID, fmt.Errorf("cannot encode command: %w", err)
 	}
-	c.opts.Logger.Debug("Command has encoded.", zap.ByteString("raw", b))
+	c.logger.log(newLogEntry(LogLevelDebug, "Command has encoded.", map[string]interface{}{"raw": b}))
 
 	// Write command to connection
 	if _, err := c.conn.Write(b); err != nil {
 		return nil, invokeID, fmt.Errorf("cannot write command: %w", err)
 	}
 
-	c.opts.Logger.With(zapFields...).Info("Command has sent.")
+	c.logger.log(newLogEntry(LogLevelInfo, "Command has sent.", fields))
 
 	// Create dedicated event channel for this request
 	r := &request{

@@ -16,9 +16,9 @@ import (
 )
 
 type Options struct {
-	Addr    string
-	Timeout *time.Duration
-	Logger  *zap.Logger
+	Timeout    *time.Duration
+	LogLevel   LogLevel
+	LogHandler LogHandler
 }
 
 type Option func(*Options)
@@ -30,17 +30,36 @@ func WithTimeout(timeout time.Duration) Option {
 	}
 }
 
-// WithProductionLogger returns Option with zap development logger (formatted plain text).
-func WithDevelopmentLogger() Option {
+// WithLogger returns Option with zap logger (JSON).
+func WithLogger() Option {
 	return func(options *Options) {
-		options.Logger, _ = zap.NewDevelopment()
+		logger, _ := zap.NewDevelopment()
+
+		options.LogLevel = LogLevelDebug
+		options.LogHandler = func(entry LogEntry) {
+			fields := make([]zap.Field, 0, len(entry.Fields))
+			for k, v := range entry.Fields {
+				fields = append(fields, zap.Any(k, v))
+			}
+
+			switch entry.Level {
+			case LogLevelDebug:
+				logger.With(fields...).Debug(entry.Message)
+			case LogLevelInfo:
+				logger.With(fields...).Info(entry.Message)
+			case LogLevelError:
+				logger.With(fields...).Error(entry.Message)
+			case LogLevelNone:
+			}
+		}
 	}
 }
 
-// WithProductionLogger returns Option with zap production logger (JSON).
-func WithProductionLogger() Option {
+// WithLogHandler returns Option with custom log handler.
+func WithLogHandler(logLevel LogLevel, handler LogHandler) Option {
 	return func(options *Options) {
-		options.Logger, _ = zap.NewProduction()
+		options.LogLevel = logLevel
+		options.LogHandler = handler
 	}
 }
 
@@ -51,6 +70,7 @@ const (
 
 var (
 	ErrConnectionClosed = errors.New("connection closed")
+	ErrHelloNotReceived = errors.New("hello not received")
 )
 
 type request struct {
@@ -59,7 +79,8 @@ type request struct {
 }
 
 type Client struct {
-	opts *Options
+	opts   *Options
+	logger *logger
 
 	state *atomic.Uint32
 
@@ -77,11 +98,7 @@ type Client struct {
 // NewClient returns Avaya Proactive Client Agent API client to work with.
 // Client keeps alive underlying connection, because APC proto is stateful.
 func NewClient(addr string, opts ...Option) (*Client, error) {
-	options := &Options{
-		Addr: addr,
-		// Default opts
-		Logger: zap.NewNop(),
-	}
+	options := &Options{}
 
 	// Apply passed opts
 	for _, opt := range opts {
@@ -123,13 +140,16 @@ func NewClient(addr string, opts ...Option) (*Client, error) {
 		invokeIDPool: pool.NewInvokeIDPool(),
 		requests:     make(map[uint32]*request),
 	}
+	if options.LogHandler != nil {
+		c.logger = newLogger(options.LogLevel, options.LogHandler)
+	}
 
 	go func() {
 		if err := c.readEvents(); err != nil {
 			if err == io.EOF {
-				c.opts.Logger.Error("EOF received!", zap.Error(err))
+				c.logger.log(newLogEntry(LogLevelError, "EOF received!", map[string]interface{}{"error": err}))
 			} else {
-				c.opts.Logger.Error("Unknown error received!", zap.Error(err))
+				c.logger.log(newLogEntry(LogLevelError, "Error received!", map[string]interface{}{"error": err}))
 			}
 
 			c.shutdown <- struct{}{}
@@ -142,8 +162,8 @@ func NewClient(addr string, opts ...Option) (*Client, error) {
 	// Check that first notification message is correct
 	if event.Keyword != "AGTSTART" ||
 		!event.IsStart() {
-		c.opts.Logger.Error("Server cannot accept new clients!")
-		return nil, err
+		c.logger.log(newLogEntry(LogLevelError, "Server cannot accept new clients!"))
+		return nil, ErrHelloNotReceived
 	}
 
 	return c, nil
@@ -208,7 +228,7 @@ func (c *Client) readEvents() error {
 		// Set actual
 		if c.opts.Timeout != nil {
 			if err := c.conn.SetDeadline(time.Now().Add(*c.opts.Timeout)); err != nil {
-				c.opts.Logger.Error("Error while setting a deadline!", zap.Error(err))
+				c.logger.log(newLogEntry(LogLevelError, "Error while setting a deadline!", map[string]interface{}{"error": err}))
 				return err
 			}
 		}
@@ -224,24 +244,28 @@ func (c *Client) readEvents() error {
 		// If the last byte of read buffer is ETX or ETB, then start event decoding
 		if buf[n-1] == ETX || buf[n-1] == ETB {
 			rawEvent := string(buf[:n])
-			c.opts.Logger.Debug("Event has received.", zap.String("raw", rawEvent))
+			c.logger.log(newLogEntry(LogLevelDebug, "Event has received.", map[string]interface{}{"raw": rawEvent}))
 
 			event, err := decodeEvent(rawEvent)
 			if err != nil {
-				c.opts.Logger.Error("Error while decoding an event!", zap.Error(err))
+				c.logger.log(newLogEntry(LogLevelError, "Error while decoding an event!", map[string]interface{}{"error": err}))
 				// We could ignore it and read newer events.
 				continue
 			}
 
-			c.opts.Logger.With(
-				zap.String("keyword", event.Keyword),
-				zap.ByteString("type", []byte{byte(event.Type)}),
-				zap.String("client", event.Client),
-				zap.Uint32("process_id", event.ProcessID),
-				zap.Uint32("invoke_id", event.InvokeID),
-				zap.Strings("segments", event.Segments),
-				zap.Bool("incomplete", event.Incomplete),
-			).Info("Event has decoded.")
+			c.logger.log(newLogEntry(
+				LogLevelInfo,
+				"Event has decoded.",
+				map[string]interface{}{
+					"keyword":    event.Keyword,
+					"type":       []byte{byte(event.Type)},
+					"client":     event.Client,
+					"process_id": event.ProcessID,
+					"invoke_id":  event.InvokeID,
+					"segments":   event.Segments,
+					"incomplete": event.Incomplete,
+				},
+			))
 
 			c.events <- event
 		}
