@@ -258,7 +258,7 @@ func (c *Client) readEvents() error {
 				"Event has decoded.",
 				map[string]interface{}{
 					"keyword":    event.Keyword,
-					"type":       []byte{byte(event.Type)},
+					"type":       string(event.Type),
 					"client":     event.Client,
 					"process_id": event.ProcessID,
 					"invoke_id":  event.InvokeID,
