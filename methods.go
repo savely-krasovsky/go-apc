@@ -46,7 +46,7 @@ func (c *Client) invokeCommand(keyword string, args ...arg) (*request, uint32, e
 	if err != nil {
 		return nil, invokeID, fmt.Errorf("cannot encode command: %w", err)
 	}
-	c.logger.log(newLogEntry(LogLevelDebug, "Command has encoded.", map[string]interface{}{"raw": b}))
+	c.logger.log(newLogEntry(LogLevelDebug, "Command has encoded.", map[string]interface{}{"raw": string(b)}))
 
 	// Write command to connection
 	if _, err := c.conn.Write(b); err != nil {
