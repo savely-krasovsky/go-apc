@@ -78,6 +78,16 @@ func (e Event) IsPending() bool {
 	return true
 }
 
+func (e Event) Is(code string) bool {
+	if len(e.Segments) < 2 ||
+		e.Segments[0] != "0" ||
+		e.Segments[1] != code {
+		return false
+	}
+
+	return true
+}
+
 func encodeCommand(keyword string, invokeID uint32, args ...string) ([]byte, error) {
 	// Checks
 	if len(keyword) > 20 {

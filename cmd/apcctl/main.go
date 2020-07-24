@@ -66,7 +66,7 @@ func main() {
 
 	client.ListCallLists()
 
-	/* if err := client.AttachJob(jobName); err != nil {
+	if err := client.AttachJob(jobName); err != nil {
 		panic(err)
 	}
 	defer func() {
@@ -75,34 +75,49 @@ func main() {
 		}
 	}()
 
-	for _, fieldName := range []string{
-		"COUNTER1",
+	fields := []string{
 		"DEBT_ID",
-		"FIO",
-		"PORTFOLIO",
-		"TSUMPAY",
-		"CURRENCY",
 		"PHONE1",
-		"PHONE_ID1",
 		"PHONE2",
-		"PHONE_ID2",
 		"PHONE3",
-		"PHONE_ID3",
 		"PHONE4",
-		"PHONE_ID4",
 		"PHONE5",
-		"PHONE_ID5",
 		"PHONE6",
-		"PHONE_ID6",
 		"PHONE7",
-		"PHONE_ID7",
 		"PHONE8",
-		"PHONE_ID9",
+		"PHONE9",
 		"PHONE10",
+		"PHONE_ID1",
+		"PHONE_ID2",
+		"PHONE_ID3",
+		"PHONE_ID4",
+		"PHONE_ID5",
+		"PHONE_ID6",
+		"PHONE_ID7",
+		"PHONE_ID8",
+		"PHONE_ID9",
 		"PHONE_ID10",
-	} {
-		if err := client.SetDataField(apc.ListTypeOutbound, fieldName); err != nil {
-			log.Println(err)
+	}
+
+	errChan := make(chan error)
+
+	for _, fieldName := range fields {
+		fieldName := fieldName
+		go func() {
+			errChan <- client.SetDataField(apc.ListTypeOutbound, fieldName)
+		}()
+	}
+
+	counter := 0
+	for err := range errChan {
+		counter++
+
+		if err != nil {
+			panic(err)
+		}
+
+		if counter == len(fields) {
+			break
 		}
 	}
 
@@ -117,7 +132,7 @@ func main() {
 
 	if err := client.ReadyNextItem(); err != nil {
 		log.Println(err)
-	}*/
+	}
 
 	// Graceful shutdown block
 	sig := make(chan os.Signal, 1)
