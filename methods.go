@@ -860,3 +860,35 @@ el:
 
 	return state, nil
 }
+
+func (c *Client) ReadField(listType ListType, fieldName string) ([]string, error) {
+	r, invokeID, err := c.invokeCommand("AGTReadField", newArg("list_type", string([]byte{byte(listType)})), newArg("field_name", fieldName))
+	defer c.destroyCommand(invokeID)
+	if err != nil {
+		return nil, fmt.Errorf("error while executing AGTSetDataField command: %w", err)
+	}
+
+	var dataSegments []string
+el:
+	for {
+		select {
+		case event := <-r.eventChan:
+			if event.IsComplete() {
+				continue
+			}
+			if event.Type == EventTypeData {
+				dataSegments = append(dataSegments, event.Segments...)
+				if event.Incomplete {
+					continue
+				}
+				break el
+			}
+
+			return nil, fmt.Errorf("unexpected event")
+		case <-r.done:
+			return nil, context.Canceled
+		}
+	}
+
+	return dataSegments, nil
+}

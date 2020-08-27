@@ -6,6 +6,8 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strconv"
+	"strings"
 	"syscall"
 
 	"gitlab.sovcombank.group/scb-mobile/lib/go-apc.git"
@@ -64,8 +66,6 @@ func main() {
 		}
 	}()
 
-	client.ListCallLists()
-
 	if err := client.AttachJob(jobName); err != nil {
 		panic(err)
 	}
@@ -75,50 +75,11 @@ func main() {
 		}
 	}()
 
-	fields := []string{
-		"DEBT_ID",
-		"PHONE1",
-		"PHONE2",
-		"PHONE3",
-		"PHONE4",
-		"PHONE5",
-		"PHONE6",
-		"PHONE7",
-		"PHONE8",
-		"PHONE9",
-		"PHONE10",
-		"PHONE_ID1",
-		"PHONE_ID2",
-		"PHONE_ID3",
-		"PHONE_ID4",
-		"PHONE_ID5",
-		"PHONE_ID6",
-		"PHONE_ID7",
-		"PHONE_ID8",
-		"PHONE_ID9",
-		"PHONE_ID10",
+	if err := client.SetDataField(apc.ListTypeOutbound, "DEBT_ID"); err != nil {
+		panic(err)
 	}
-
-	errChan := make(chan error)
-
-	for _, fieldName := range fields {
-		fieldName := fieldName
-		go func() {
-			errChan <- client.SetDataField(apc.ListTypeOutbound, fieldName)
-		}()
-	}
-
-	counter := 0
-	for err := range errChan {
-		counter++
-
-		if err != nil {
-			panic(err)
-		}
-
-		if counter == len(fields) {
-			break
-		}
+	if err := client.SetDataField(apc.ListTypeOutbound, "CURPHONE"); err != nil {
+		panic(err)
 	}
 
 	if err := client.AvailWork(); err != nil {
@@ -148,6 +109,28 @@ func main() {
 			if !ok {
 				fmt.Println("notification channel closed!")
 				return
+			}
+
+			if event.Keyword == "AGTCallNotify" {
+				for _, s := range event.Segments {
+					parts := strings.Split(s, ",")
+					if len(parts) == 2 {
+						if parts[0] == "CURPHONE" {
+							id, err := strconv.Atoi(parts[1])
+							if err != nil {
+								log.Println(err)
+								break
+							}
+
+							field, err := client.ReadField(apc.ListTypeOutbound, "PHONE_ID"+strconv.Itoa(id))
+							if err != nil {
+								log.Println(err)
+								break
+							}
+							fmt.Println(field)
+						}
+					}
+				}
 			}
 
 			if event.Keyword == "AGTAutoReleaseLine" {

@@ -1,6 +1,7 @@
 package apc
 
 import (
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"io"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/spacemonkeygo/openssl"
+	//"github.com/spacemonkeygo/openssl"
 	"gitlab.sovcombank.group/scb-mobile/lib/go-apc.git/pool"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -16,21 +18,22 @@ import (
 )
 
 type Options struct {
-	Timeout    *time.Duration
-	LogLevel   LogLevel
-	LogHandler LogHandler
+	Timeout          *time.Duration
+	LogLevel         LogLevel
+	LogHandler       LogHandler
+	NativeHTTPClient bool
 }
 
 type Option func(*Options)
 
-// WithTimeout retutns Option with Timeout for underlying Client connection.
+// WithTimeout returns an Option with Timeout for underlying Client connection.
 func WithTimeout(timeout time.Duration) Option {
 	return func(options *Options) {
 		options.Timeout = &timeout
 	}
 }
 
-// WithLogger returns Option with zap logger (JSON).
+// WithLogger returns an Option with zap logger (JSON).
 func WithLogger() Option {
 	return func(options *Options) {
 		logger, _ := zap.NewDevelopment()
@@ -55,11 +58,19 @@ func WithLogger() Option {
 	}
 }
 
-// WithLogHandler returns Option with custom log handler.
+// WithLogHandler returns an Option with custom log handler.
 func WithLogHandler(logLevel LogLevel, handler LogHandler) Option {
 	return func(options *Options) {
 		options.LogLevel = logLevel
 		options.LogHandler = handler
+	}
+}
+
+// WithNativeHTTPClient returns an Option that forces
+// client to use Golang native HTTP client instead of OpenSSL.
+func WithNativeHTTPClient() Option {
+	return func(options *Options) {
+		options.NativeHTTPClient = true
 	}
 }
 
@@ -105,29 +116,30 @@ func NewClient(addr string, opts ...Option) (*Client, error) {
 		opt(options)
 	}
 
-	// Golang native realization DO NOT WORK and I don't fucking know why. Seriously.
-	// Server just drops connection after few requests/minutes with errno: -11 (EAGAIN or EWOULDBLOCK).
-	/*
+	var tlsConn net.Conn
+	if !options.NativeHTTPClient {
+		// Avaya Proactive Contact agent binary support only TLSv1
+		sslCtx, err := openssl.NewCtxWithVersion(openssl.TLSv1)
+		if err != nil {
+			return nil, fmt.Errorf("error while initializing OpenSSL context: %w", err)
+		}
+
+		// It's just raw TLS, encrypted by session keys, there is no host verification
+		tlsConn, err = openssl.Dial("tcp", addr, sslCtx, openssl.InsecureSkipHostVerification)
+		if err != nil {
+			return nil, fmt.Errorf("error while dialing: %w", err)
+		}
+	} else {
+		// Golang native realization DO NOT WORK and I don't fucking know why. Seriously.
+		// Server just drops connection after few requests/minutes with errno: -11 (EAGAIN or EWOULDBLOCK).
 		conn, err := net.Dial("tcp", addr)
 		if err != nil {
 			return nil, fmt.Errorf("error while dialing: %w", err)
 		}
 
-		tlsConn := tls.Client(conn, &tls.Config{
+		tlsConn = tls.Client(conn, &tls.Config{
 			InsecureSkipVerify: true,
 		})
-	*/
-
-	// Avaya Proactive Contact agent binary support only TLSv1
-	sslCtx, err := openssl.NewCtxWithVersion(openssl.TLSv1)
-	if err != nil {
-		return nil, fmt.Errorf("error while initializing OpenSSL context: %w", err)
-	}
-
-	// It's just raw TLS, encrypted by session keys, there is no host verification
-	tlsConn, err := openssl.Dial("tcp", addr, sslCtx, openssl.InsecureSkipHostVerification)
-	if err != nil {
-		return nil, fmt.Errorf("error while dialing: %w", err)
 	}
 
 	c := &Client{
