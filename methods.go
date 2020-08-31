@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-	"time"
 )
 
 type arg struct {
@@ -599,9 +598,6 @@ el:
 			}
 
 			return fmt.Errorf("unexpected event")
-		// TODO: TEMPORARY WORKAROUND
-		case <-time.After(30 * time.Second):
-			return context.DeadlineExceeded
 		case <-r.done:
 			return context.Canceled
 		}
