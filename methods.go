@@ -27,6 +27,7 @@ func (c *Client) invokeCommand(keyword string, args ...arg) (*request, uint32, e
 	}
 
 	fields := map[string]interface{}{
+		"type":      string(EventTypeCommand),
 		"keyword":   keyword,
 		"invoke_id": invokeID,
 	}
