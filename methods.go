@@ -40,6 +40,7 @@ func (c *Client) invokeCommand(keyword string, args ...arg) (*request, uint32, e
 			fields[arg.key] = arg.value
 		}
 	}
+	fields["segments"] = flatArgs
 
 	// Encode command
 	b, err := encodeCommand(keyword, invokeID, flatArgs...)
