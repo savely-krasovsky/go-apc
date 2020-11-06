@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/spacemonkeygo/openssl"
 	//"github.com/spacemonkeygo/openssl"
 	"gitlab.sovcombank.group/scb-mobile/lib/go-apc.git/pool"
 	"go.uber.org/atomic"
@@ -120,7 +121,7 @@ func NewClient(addr string, opts ...Option) (*Client, error) {
 
 	var tlsConn net.Conn
 	if !options.NativeHTTPClient {
-		/*// Avaya Proactive Contact agent binary support only TLSv1
+		// Avaya Proactive Contact agent binary support only TLSv1
 		sslCtx, err := openssl.NewCtxWithVersion(openssl.TLSv1)
 		if err != nil {
 			return nil, fmt.Errorf("error while initializing OpenSSL context: %w", err)
@@ -130,7 +131,7 @@ func NewClient(addr string, opts ...Option) (*Client, error) {
 		tlsConn, err = openssl.Dial("tcp", addr, sslCtx, openssl.InsecureSkipHostVerification)
 		if err != nil {
 			return nil, fmt.Errorf("error while dialing: %w", err)
-		}*/
+		}
 	} else {
 		// Golang native realization DO NOT WORK and I don't fucking know why. Seriously.
 		// Server just drops connection after few requests/minutes with errno: -11 (EAGAIN or EWOULDBLOCK).
