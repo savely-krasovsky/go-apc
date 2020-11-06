@@ -581,7 +581,7 @@ func (c *Client) ReadField(ctx context.Context, listType ListType, fieldName str
 		return nil, err
 	}
 
-	if rawSegments == nil || len(rawSegments) != 2 || rawSegments[0] == "M00001" {
+	if rawSegments == nil || len(rawSegments) != 2 || rawSegments[0] != "M00001" {
 		return nil, fmt.Errorf("invalid segment")
 	}
 
