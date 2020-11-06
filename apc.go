@@ -1,15 +1,16 @@
 package apc
 
 import (
+	"context"
 	"crypto/tls"
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"sync"
 	"time"
 
-	"github.com/spacemonkeygo/openssl"
 	//"github.com/spacemonkeygo/openssl"
 	"gitlab.sovcombank.group/scb-mobile/lib/go-apc.git/pool"
 	"go.uber.org/atomic"
@@ -85,8 +86,9 @@ var (
 )
 
 type request struct {
+	context   context.Context
+	cancel    context.CancelFunc
 	eventChan chan Event
-	done      chan struct{}
 }
 
 type Client struct {
@@ -95,10 +97,10 @@ type Client struct {
 
 	state *atomic.Uint32
 
-	conn         net.Conn
-	events       chan Event
-	notification chan Event
-	shutdown     chan struct{}
+	conn          net.Conn
+	events        chan Event
+	notifications chan Notification
+	shutdown      chan struct{}
 
 	invokeIDPool *pool.InvokeIDPool
 	requests     map[uint32]*request
@@ -118,7 +120,7 @@ func NewClient(addr string, opts ...Option) (*Client, error) {
 
 	var tlsConn net.Conn
 	if !options.NativeHTTPClient {
-		// Avaya Proactive Contact agent binary support only TLSv1
+		/*// Avaya Proactive Contact agent binary support only TLSv1
 		sslCtx, err := openssl.NewCtxWithVersion(openssl.TLSv1)
 		if err != nil {
 			return nil, fmt.Errorf("error while initializing OpenSSL context: %w", err)
@@ -128,7 +130,7 @@ func NewClient(addr string, opts ...Option) (*Client, error) {
 		tlsConn, err = openssl.Dial("tcp", addr, sslCtx, openssl.InsecureSkipHostVerification)
 		if err != nil {
 			return nil, fmt.Errorf("error while dialing: %w", err)
-		}
+		}*/
 	} else {
 		// Golang native realization DO NOT WORK and I don't fucking know why. Seriously.
 		// Server just drops connection after few requests/minutes with errno: -11 (EAGAIN or EWOULDBLOCK).
@@ -143,14 +145,14 @@ func NewClient(addr string, opts ...Option) (*Client, error) {
 	}
 
 	c := &Client{
-		opts:         options,
-		state:        atomic.NewUint32(ConnOK),
-		conn:         tlsConn,
-		events:       make(chan Event, 128),
-		notification: make(chan Event, 128),
-		shutdown:     make(chan struct{}),
-		invokeIDPool: pool.NewInvokeIDPool(),
-		requests:     make(map[uint32]*request),
+		opts:          options,
+		state:         atomic.NewUint32(ConnOK),
+		conn:          tlsConn,
+		events:        make(chan Event, 128),
+		notifications: make(chan Notification, 128),
+		shutdown:      make(chan struct{}),
+		invokeIDPool:  pool.NewInvokeIDPool(),
+		requests:      make(map[uint32]*request),
 	}
 	if options.LogHandler != nil {
 		c.logger = newLogger(options.LogLevel, options.LogHandler)
@@ -163,9 +165,9 @@ func NewClient(addr string, opts ...Option) (*Client, error) {
 			} else {
 				c.logger.log(newLogEntry(LogLevelError, "Error received!", map[string]interface{}{"error": err}))
 			}
-
-			c.shutdown <- struct{}{}
 		}
+
+		c.shutdown <- struct{}{}
 	}()
 
 	// Read AGTSTART
@@ -187,8 +189,7 @@ func (c *Client) Start() error {
 		select {
 		case event := <-c.events:
 			if event.Type == EventTypeNotification {
-				c.notification <- event
-				continue
+				event.InvokeID = math.MaxUint32
 			}
 
 			c.mu.RLock()
@@ -205,15 +206,15 @@ func (c *Client) Start() error {
 			// Close it...
 			c.conn.Close()
 
-			// Close notification channel...
-			close(c.notification)
+			// Close notifications channel...
+			close(c.notifications)
 
 			// Close global events channel...
 			close(c.events)
 
 			// And finally send done signal to all active requests.
 			for _, r := range c.requests {
-				r.done <- struct{}{}
+				r.cancel()
 			}
 
 			return ErrConnectionClosed
@@ -221,14 +222,16 @@ func (c *Client) Start() error {
 	}
 }
 
-// Stop gracefully stops main event loop and closes connection.
-func (c *Client) Stop() {
-	c.shutdown <- struct{}{}
-}
-
 // Notifications returns read-only notification event channel.
-func (c *Client) Notifications() <-chan Event {
-	return c.notification
+func (c *Client) Notifications(ctx context.Context) <-chan Notification {
+	r := newRequest(ctx)
+
+	c.mu.Lock()
+	c.requests[math.MaxUint32] = r
+	c.mu.Unlock()
+
+	go processNotifications(r, c.notifications)
+	return c.notifications
 }
 
 func (c *Client) readEvents() error {
@@ -239,13 +242,13 @@ func (c *Client) readEvents() error {
 	for {
 		// Set actual
 		if c.opts.Timeout != nil {
-			if err := c.conn.SetDeadline(time.Now().Add(*c.opts.Timeout)); err != nil {
+			if err := c.conn.SetReadDeadline(time.Now().Add(*c.opts.Timeout)); err != nil {
 				c.logger.log(newLogEntry(LogLevelError, "Error while setting a deadline!", map[string]interface{}{"error": err}))
 				return err
 			}
 		}
 
-		// 4096 bytes is a maximum response size.
+		// 4096 bytes is a maximum request size.
 		buf := make([]byte, 4096)
 
 		n, err := decoder.Read(buf)
@@ -275,11 +278,18 @@ func (c *Client) readEvents() error {
 					"process_id": event.ProcessID,
 					"invoke_id":  event.InvokeID,
 					"segments":   event.Segments,
-					"incomplete": event.Incomplete,
+					"incomplete": event.IsIncomplete,
 				},
 			))
 
 			c.events <- event
+
+			// In case of successful logoff just break the read loop
+			if event.IsSuccessfulResponse() && event.Keyword == "AGTLogoff" {
+				break
+			}
 		}
 	}
+
+	return nil
 }

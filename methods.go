@@ -19,7 +19,19 @@ func newArg(key, value string) arg {
 	}
 }
 
-func (c *Client) invokeCommand(keyword string, args ...arg) (*request, uint32, error) {
+func newRequest(ctx context.Context) *request {
+	// Add cancellation context to parent one
+	ctx, cancel := context.WithCancel(ctx)
+
+	// Create dedicated event channel for this request
+	return &request{
+		context:   ctx,
+		cancel:    cancel,
+		eventChan: make(chan Event, 1),
+	}
+}
+
+func (c *Client) invokeCommand(ctx context.Context, keyword string, args ...arg) (*request, uint32, error) {
 	invokeID := c.invokeIDPool.Get()
 
 	if c.state.Load() != ConnOK {
@@ -56,11 +68,7 @@ func (c *Client) invokeCommand(keyword string, args ...arg) (*request, uint32, e
 
 	c.logger.log(newLogEntry(LogLevelInfo, "Command has sent.", fields))
 
-	// Create dedicated event channel for this request
-	r := &request{
-		eventChan: make(chan Event, 1),
-		done:      make(chan struct{}, 1),
-	}
+	r := newRequest(ctx)
 
 	c.mu.Lock()
 	c.requests[invokeID] = r
@@ -89,82 +97,43 @@ func (c *Client) destroyCommand(invokeID uint32) {
 	c.invokeIDPool.Release(invokeID)
 }
 
-func (c *Client) Logon(agentName string, password string) error {
-	r, invokeID, err := c.invokeCommand("AGTLogon", newArg("agent_name", agentName), newArg("password", password), newArg("version", "GOLANG_0.0.2"))
+func (c *Client) Logon(ctx context.Context, agentName string, password string) error {
+	r, invokeID, err := c.invokeCommand(ctx, "AGTLogon", newArg("agent_name", agentName), newArg("password", password), newArg("version", "GOLANG_0.0.3"))
 	defer c.destroyCommand(invokeID)
 	if err != nil {
 		return fmt.Errorf("error while executing AGTLogon command: %w", err)
 	}
 
-el:
-	for {
-		select {
-		case event := <-r.eventChan:
-			if event.IsPending() {
-				continue
-			}
-			if event.IsComplete() {
-				break el
-			}
-
-			return fmt.Errorf("unexpected event")
-		case <-r.done:
-			return context.Canceled
-		}
+	if _, err := processRequest(r); err != nil {
+		return err
 	}
 
 	return nil
 }
 
-func (c *Client) ReserveHeadset(headsetID int) error {
-	r, invokeID, err := c.invokeCommand("AGTReserveHeadset", newArg("headset_id", strconv.Itoa(headsetID)))
+func (c *Client) ReserveHeadset(ctx context.Context, headsetID int) error {
+	r, invokeID, err := c.invokeCommand(ctx, "AGTReserveHeadset", newArg("headset_id", strconv.Itoa(headsetID)))
 	defer c.destroyCommand(invokeID)
 	if err != nil {
 		return fmt.Errorf("error while executing AGTReserveHeadset command: %w", err)
 	}
 
-el:
-	for {
-		select {
-		case event := <-r.eventChan:
-			if event.IsPending() {
-				continue
-			}
-			if event.IsComplete() {
-				break el
-			}
-
-			return fmt.Errorf("unexpected event")
-		case <-r.done:
-			return context.Canceled
-		}
+	if _, err := processRequest(r); err != nil {
+		return err
 	}
 
 	return nil
 }
 
-func (c *Client) ConnectHeadset() error {
-	r, invokeID, err := c.invokeCommand("AGTConnHeadset")
+func (c *Client) ConnectHeadset(ctx context.Context) error {
+	r, invokeID, err := c.invokeCommand(ctx, "AGTConnHeadset")
 	defer c.destroyCommand(invokeID)
 	if err != nil {
 		return fmt.Errorf("error while executing AGTConnHeadset command: %w", err)
 	}
 
-el:
-	for {
-		select {
-		case event := <-r.eventChan:
-			if event.IsPending() {
-				continue
-			}
-			if event.IsComplete() {
-				break el
-			}
-
-			return fmt.Errorf("unexpected event")
-		case <-r.done:
-			return context.Canceled
-		}
+	if _, err := processRequest(r); err != nil {
+		return err
 	}
 
 	return nil
@@ -193,37 +162,20 @@ const (
 	StatusTypeActive   StatusType = 'A'
 )
 
-func (c *Client) ListJobs(jobType JobType) ([]Job, error) {
-	r, invokeID, err := c.invokeCommand("AGTListJobs", newArg("job_type", string([]byte{byte(jobType)})))
+func (c *Client) ListJobs(ctx context.Context, jobType JobType) ([]Job, error) {
+	r, invokeID, err := c.invokeCommand(ctx, "AGTListJobs", newArg("job_type", string([]byte{byte(jobType)})))
 	defer c.destroyCommand(invokeID)
 	if err != nil {
 		return nil, fmt.Errorf("error while executing AGTListJobs command: %w", err)
 	}
 
-	var dataSegments []string
-el:
-	for {
-		select {
-		case event := <-r.eventChan:
-			if event.IsComplete() {
-				continue
-			}
-			if event.Type == EventTypeData {
-				dataSegments = append(dataSegments, event.Segments...)
-				if event.Incomplete {
-					continue
-				}
-				break el
-			}
-
-			return nil, fmt.Errorf("unexpected event")
-		case <-r.done:
-			return nil, context.Canceled
-		}
+	rawSegments, err := processRequest(r)
+	if err != nil {
+		return nil, err
 	}
 
-	jobs := make([]Job, 0, len(dataSegments))
-	for _, segment := range dataSegments {
+	jobs := make([]Job, 0, len(rawSegments))
+	for _, segment := range rawSegments {
 		jobParts := strings.Split(segment, ",")
 		if len(jobParts) == 3 {
 			jobs = append(jobs, Job{
@@ -237,102 +189,55 @@ el:
 	return jobs, nil
 }
 
-func (c *Client) ListCallLists() ([]string, error) {
-	r, invokeID, err := c.invokeCommand("AGTListCallLists")
+func (c *Client) ListCallLists(ctx context.Context) ([]string, error) {
+	r, invokeID, err := c.invokeCommand(ctx, "AGTListCallLists")
 	defer c.destroyCommand(invokeID)
 	if err != nil {
 		return nil, fmt.Errorf("error while executing AGTListCallLists command: %w", err)
 	}
 
-	var dataSegments []string
-el:
-	for {
-		select {
-		case event := <-r.eventChan:
-			if event.IsComplete() {
-				continue
-			}
-			if event.Type == EventTypeData {
-				dataSegments = append(dataSegments, event.Segments...)
-				if event.Incomplete {
-					continue
-				}
-				break el
-			}
-
-			return nil, fmt.Errorf("unexpected event")
-		case <-r.done:
-			return nil, context.Canceled
-		}
+	rawSegments, err := processRequest(r)
+	if err != nil {
+		return nil, err
 	}
 
-	callLists := make([]string, 0, len(dataSegments))
-	for _, segment := range dataSegments {
+	callLists := make([]string, 0, len(rawSegments))
+	for _, segment := range rawSegments {
 		callLists = append(callLists, segment)
 	}
 
 	return callLists, nil
 }
 
-func (c *Client) ListCallFields(listName string) ([]string, error) {
-	r, invokeID, err := c.invokeCommand("AGTListCallFields", newArg("list_name", listName))
+func (c *Client) ListCallFields(ctx context.Context, listName string) ([]string, error) {
+	r, invokeID, err := c.invokeCommand(ctx, "AGTListCallFields", newArg("list_name", listName))
 	defer c.destroyCommand(invokeID)
 	if err != nil {
 		return nil, fmt.Errorf("error while executing AGTListCallFields command: %w", err)
 	}
 
-	var dataSegments []string
-el:
-	for {
-		select {
-		case event := <-r.eventChan:
-			if event.IsComplete() {
-				continue
-			}
-			if event.Type == EventTypeData {
-				dataSegments = append(dataSegments, event.Segments...)
-				if event.Incomplete {
-					continue
-				}
-				break el
-			}
-
-			return nil, fmt.Errorf("unexpected event")
-		case <-r.done:
-			return nil, context.Canceled
-		}
+	rawSegments, err := processRequest(r)
+	if err != nil {
+		return nil, err
 	}
 
-	callFields := make([]string, 0, len(dataSegments))
-	for _, segment := range dataSegments {
+	callFields := make([]string, 0, len(rawSegments))
+	for _, segment := range rawSegments {
 		callFields = append(callFields, segment)
 	}
 
 	return callFields, nil
 }
 
-func (c *Client) AttachJob(jobName string) error {
-	r, invokeID, err := c.invokeCommand("AGTAttachJob", newArg("job_name", jobName))
+func (c *Client) AttachJob(ctx context.Context, jobName string) error {
+	r, invokeID, err := c.invokeCommand(ctx, "AGTAttachJob", newArg("job_name", jobName))
 	defer c.destroyCommand(invokeID)
 	if err != nil {
 		return fmt.Errorf("error while executing AGTAttachJob command: %w", err)
 	}
 
-el:
-	for {
-		select {
-		case event := <-r.eventChan:
-			if event.IsPending() {
-				continue
-			}
-			if event.IsComplete() {
-				break el
-			}
-
-			return fmt.Errorf("unexpected event")
-		case <-r.done:
-			return context.Canceled
-		}
+	if _, err := processRequest(r); err != nil {
+		return err
 	}
 
 	return nil
@@ -349,37 +254,20 @@ type DataField struct {
 	Name string
 }
 
-func (c *Client) ListDataFields(listType ListType) ([]DataField, error) {
-	r, invokeID, err := c.invokeCommand("AGTListDataFields", newArg("list_type", string([]byte{byte(listType)})))
+func (c *Client) ListDataFields(ctx context.Context, listType ListType) ([]DataField, error) {
+	r, invokeID, err := c.invokeCommand(ctx, "AGTListDataFields", newArg("list_type", string([]byte{byte(listType)})))
 	defer c.destroyCommand(invokeID)
 	if err != nil {
 		return nil, fmt.Errorf("error while executing AGTListDataFields command: %w", err)
 	}
 
-	var dataSegments []string
-el:
-	for {
-		select {
-		case event := <-r.eventChan:
-			if event.IsComplete() {
-				continue
-			}
-			if event.Type == EventTypeData {
-				dataSegments = append(dataSegments, event.Segments...)
-				if event.Incomplete {
-					continue
-				}
-				break el
-			}
-
-			return nil, fmt.Errorf("unexpected event")
-		case <-r.done:
-			return nil, context.Canceled
-		}
+	rawSegments, err := processRequest(r)
+	if err != nil {
+		return nil, err
 	}
 
-	dataFields := make([]DataField, 0, len(dataSegments))
-	for _, segment := range dataSegments {
+	dataFields := make([]DataField, 0, len(rawSegments))
+	for _, segment := range rawSegments {
 		dataFieldParts := strings.Split(segment, ",")
 		if len(dataFieldParts) == 4 {
 			dataFields = append(dataFields, DataField{
@@ -391,502 +279,326 @@ el:
 	return dataFields, nil
 }
 
-func (c *Client) SetNotifyKeyField(listType ListType, fieldName string) error {
-	r, invokeID, err := c.invokeCommand("AGTSetNotifyKeyField", newArg("list_type", string([]byte{byte(listType)})), newArg("field_name", fieldName))
+func (c *Client) SetNotifyKeyField(ctx context.Context, listType ListType, fieldName string) error {
+	r, invokeID, err := c.invokeCommand(ctx, "AGTSetNotifyKeyField", newArg("list_type", string([]byte{byte(listType)})), newArg("field_name", fieldName))
 	defer c.destroyCommand(invokeID)
 	if err != nil {
 		return fmt.Errorf("error while executing AGTSetNotifyKeyField command: %w", err)
 	}
 
-el:
-	for {
-		select {
-		case event := <-r.eventChan:
-			if event.IsComplete() {
-				break el
-			}
-
-			return fmt.Errorf("unexpected event")
-		case <-r.done:
-			return context.Canceled
-		}
+	if _, err := processRequest(r); err != nil {
+		return err
 	}
 
 	return nil
 }
 
-func (c *Client) SetDataField(listType ListType, fieldName string) error {
-	r, invokeID, err := c.invokeCommand("AGTSetDataField", newArg("list_type", string([]byte{byte(listType)})), newArg("field_name", fieldName))
+func (c *Client) SetDataField(ctx context.Context, listType ListType, fieldName string) error {
+	r, invokeID, err := c.invokeCommand(ctx, "AGTSetDataField", newArg("list_type", string([]byte{byte(listType)})), newArg("field_name", fieldName))
 	defer c.destroyCommand(invokeID)
 	if err != nil {
 		return fmt.Errorf("error while executing AGTSetDataField command: %w", err)
 	}
 
-el:
-	for {
-		select {
-		case event := <-r.eventChan:
-			if event.IsComplete() {
-				break el
-			}
-
-			return fmt.Errorf("unexpected event")
-		case <-r.done:
-			return context.Canceled
-		}
+	if _, err := processRequest(r); err != nil {
+		return err
 	}
 
 	return nil
 }
 
-func (c *Client) AvailWork() error {
-	r, invokeID, err := c.invokeCommand("AGTAvailWork")
+func (c *Client) AvailWork(ctx context.Context) error {
+	r, invokeID, err := c.invokeCommand(ctx, "AGTAvailWork")
 	defer c.destroyCommand(invokeID)
 	if err != nil {
 		return fmt.Errorf("error while executing AGTAvailWork command: %w", err)
 	}
 
-el:
-	for {
-		select {
-		case event := <-r.eventChan:
-			if event.IsPending() {
-				continue
-			}
-			if event.IsComplete() {
-				break el
-			}
-
-			return fmt.Errorf("unexpected event")
-		case <-r.done:
-			return context.Canceled
-		}
+	if _, err := processRequest(r); err != nil {
+		return err
 	}
 
 	return nil
 }
 
-func (c *Client) ReadyNextItem() error {
-	r, invokeID, err := c.invokeCommand("AGTReadyNextItem")
+func (c *Client) ReadyNextItem(ctx context.Context) error {
+	r, invokeID, err := c.invokeCommand(ctx, "AGTReadyNextItem")
 	defer c.destroyCommand(invokeID)
 	if err != nil {
 		return fmt.Errorf("error while executing AGTReadyNextItem command: %w", err)
 	}
 
-el:
-	for {
-		select {
-		case event := <-r.eventChan:
-			if event.IsComplete() {
-				break el
-			}
-
-			return fmt.Errorf("unexpected event")
-		case <-r.done:
-			return context.Canceled
-		}
+	if _, err := processRequest(r); err != nil {
+		return err
 	}
 
 	return nil
 }
 
-func (c *Client) ListKeys() ([]string, error) {
-	r, invokeID, err := c.invokeCommand("AGTListKeys")
+func (c *Client) ListKeys(ctx context.Context) ([]string, error) {
+	r, invokeID, err := c.invokeCommand(ctx, "AGTListKeys")
 	defer c.destroyCommand(invokeID)
 	if err != nil {
 		return nil, fmt.Errorf("error while executing AGTListKeys command: %w", err)
 	}
 
-	var dataSegments []string
-el:
-	for {
-		select {
-		case event := <-r.eventChan:
-			if event.IsComplete() {
-				continue
-			}
-			if event.Type == EventTypeData {
-				dataSegments = append(dataSegments, event.Segments...)
-				if event.Incomplete {
-					continue
-				}
-				break el
-			}
-
-			return nil, fmt.Errorf("unexpected event")
-		case <-r.done:
-			return nil, context.Canceled
-		}
+	rawSegments, err := processRequest(r)
+	if err != nil {
+		return nil, err
 	}
 
-	keys := make([]string, 0, len(dataSegments))
-	for _, segment := range dataSegments {
+	keys := make([]string, 0, len(rawSegments))
+	for _, segment := range rawSegments {
 		keys = append(keys, segment)
 	}
 
 	return keys, nil
 }
 
-func (c *Client) ReleaseLine() error {
-	r, invokeID, err := c.invokeCommand("AGTReleaseLine")
+func (c *Client) ReleaseLine(ctx context.Context) error {
+	r, invokeID, err := c.invokeCommand(ctx, "AGTReleaseLine")
 	defer c.destroyCommand(invokeID)
 	if err != nil {
 		return fmt.Errorf("error while executing AGTReleaseLine command: %w", err)
 	}
 
-el:
-	for {
-		select {
-		case event := <-r.eventChan:
-			if event.IsPending() {
-				continue
-			}
-			if event.IsComplete() {
-				break el
-			}
-
-			return fmt.Errorf("unexpected event")
-		case <-r.done:
-			return context.Canceled
-		}
+	if _, err := processRequest(r); err != nil {
+		return err
 	}
 
 	return nil
 }
 
-func (c *Client) FinishedItem(compCode int) error {
-	r, invokeID, err := c.invokeCommand("AGTFinishedItem", newArg("comp_code", strconv.Itoa(compCode)))
+func (c *Client) FinishedItem(ctx context.Context, compCode int) error {
+	r, invokeID, err := c.invokeCommand(ctx, "AGTFinishedItem", newArg("comp_code", strconv.Itoa(compCode)))
 	defer c.destroyCommand(invokeID)
 	if err != nil {
 		return fmt.Errorf("error while executing AGTFinishedItem command: %w", err)
 	}
 
-el:
-	for {
-		select {
-		case event := <-r.eventChan:
-			if event.IsPending() {
-				continue
-			}
-			if event.IsComplete() {
-				break el
-			}
-
-			return fmt.Errorf("unexpected event")
-		case <-r.done:
-			return context.Canceled
-		}
+	if _, err := processRequest(r); err != nil {
+		return err
 	}
 
 	return nil
 }
 
-func (c *Client) NoFurtherWork() error {
-	r, invokeID, err := c.invokeCommand("AGTNoFurtherWork")
+func (c *Client) NoFurtherWork(ctx context.Context) error {
+	r, invokeID, err := c.invokeCommand(ctx, "AGTNoFurtherWork")
 	defer c.destroyCommand(invokeID)
 	if err != nil {
 		return fmt.Errorf("error while executing AGTNoFurtherWork command: %w", err)
 	}
 
-el:
-	for {
-		select {
-		case event := <-r.eventChan:
-			if event.IsPending() {
-				continue
-			}
-			if event.IsComplete() {
-				break el
-			}
-
-			return fmt.Errorf("unexpected event")
-		case <-r.done:
-			return context.Canceled
-		}
+	if _, err := processRequest(r); err != nil {
+		return err
 	}
 
 	return nil
 }
 
-func (c *Client) DetachJob() error {
-	r, invokeID, err := c.invokeCommand("AGTDetachJob")
+func (c *Client) DetachJob(ctx context.Context) error {
+	r, invokeID, err := c.invokeCommand(ctx, "AGTDetachJob")
 	defer c.destroyCommand(invokeID)
 	if err != nil {
 		return fmt.Errorf("error while executing AGTDetachJob command: %w", err)
 	}
 
-el:
-	for {
-		select {
-		case event := <-r.eventChan:
-			if event.IsComplete() {
-				break el
-			}
-
-			return fmt.Errorf("unexpected event")
-		case <-r.done:
-			return context.Canceled
-		}
+	if _, err := processRequest(r); err != nil {
+		return err
 	}
 
 	return nil
 }
 
-func (c *Client) DisconnectHeadset() error {
-	r, invokeID, err := c.invokeCommand("AGTDisconnHeadset")
+func (c *Client) DisconnectHeadset(ctx context.Context) error {
+	r, invokeID, err := c.invokeCommand(ctx, "AGTDisconnHeadset")
 	defer c.destroyCommand(invokeID)
 	if err != nil {
 		return fmt.Errorf("error while executing AGTDisconnHeadset command: %w", err)
 	}
 
-el:
-	for {
-		select {
-		case event := <-r.eventChan:
-			if event.IsPending() {
-				continue
-			}
-			if event.IsComplete() {
-				break el
-			}
-
-			return fmt.Errorf("unexpected event")
-		case <-r.done:
-			return context.Canceled
-		}
+	if _, err := processRequest(r); err != nil {
+		return err
 	}
 
 	return nil
 }
 
-func (c *Client) FreeHeadset() error {
-	r, invokeID, err := c.invokeCommand("AGTFreeHeadset")
+func (c *Client) FreeHeadset(ctx context.Context) error {
+	r, invokeID, err := c.invokeCommand(ctx, "AGTFreeHeadset")
 	defer c.destroyCommand(invokeID)
 	if err != nil {
 		return fmt.Errorf("error while executing AGTFreeHeadset command: %w", err)
 	}
 
-el:
-	for {
-		select {
-		case event := <-r.eventChan:
-			if event.IsPending() {
-				continue
-			}
-			if event.IsComplete() {
-				break el
-			}
-
-			return fmt.Errorf("unexpected event")
-		case <-r.done:
-			return context.Canceled
-		}
+	if _, err := processRequest(r); err != nil {
+		return err
 	}
 
 	return nil
 }
 
 // Logoff sends ATGLogoff command, then Proactive Control server terminates session
-func (c *Client) Logoff() error {
-	r, invokeID, err := c.invokeCommand("AGTLogoff")
+func (c *Client) Logoff(ctx context.Context) error {
+	r, invokeID, err := c.invokeCommand(ctx, "AGTLogoff")
 	defer c.destroyCommand(invokeID)
 	if err != nil {
 		return fmt.Errorf("error while executing AGTLogoff command: %w", err)
 	}
 
-el:
-	for {
-		select {
-		case event := <-r.eventChan:
-			if event.IsPending() {
-				continue
-			}
-			if event.IsComplete() {
-				break el
-			}
-
-			return fmt.Errorf("unexpected event")
-		case <-r.done:
-			return context.Canceled
-		}
+	if _, err := processRequest(r); err != nil {
+		return err
 	}
 
 	return nil
 }
 
-func (c *Client) EchoOn() error {
-	r, invokeID, err := c.invokeCommand("AGTEchoOn")
+func (c *Client) EchoOn(ctx context.Context) error {
+	r, invokeID, err := c.invokeCommand(ctx, "AGTEchoOn")
 	defer c.destroyCommand(invokeID)
 	if err != nil {
 		return fmt.Errorf("error while executing AGTEchoOn command: %w", err)
 	}
 
-el:
-	for {
-		select {
-		case event := <-r.eventChan:
-			if event.IsComplete() {
-				break el
-			}
-
-			return fmt.Errorf("unexpected event")
-		case <-r.done:
-			return context.Canceled
-		}
+	if _, err := processRequest(r); err != nil {
+		return err
 	}
 
 	return nil
 }
 
-func (c *Client) EchoOff() error {
-	r, invokeID, err := c.invokeCommand("AGTEchoOff")
+func (c *Client) EchoOff(ctx context.Context) error {
+	r, invokeID, err := c.invokeCommand(ctx, "AGTEchoOff")
 	defer c.destroyCommand(invokeID)
 	if err != nil {
 		return fmt.Errorf("error while executing AGTEchoOff command: %w", err)
 	}
 
-el:
-	for {
-		select {
-		case event := <-r.eventChan:
-			if event.IsComplete() {
-				break el
-			}
-
-			return fmt.Errorf("unexpected event")
-		case <-r.done:
-			return context.Canceled
-		}
+	if _, err := processRequest(r); err != nil {
+		return err
 	}
 
 	return nil
 }
 
-func (c *Client) LogIoStart() error {
-	r, invokeID, err := c.invokeCommand("AGTLogIoStart")
+func (c *Client) LogIoStart(ctx context.Context) error {
+	r, invokeID, err := c.invokeCommand(ctx, "AGTLogIoStart")
 	defer c.destroyCommand(invokeID)
 	if err != nil {
 		return fmt.Errorf("error while executing AGTLogIoStart command: %w", err)
 	}
 
-el:
-	for {
-		select {
-		case event := <-r.eventChan:
-			if event.IsComplete() {
-				break el
-			}
-
-			return fmt.Errorf("unexpected event")
-		case <-r.done:
-			return context.Canceled
-		}
+	if _, err := processRequest(r); err != nil {
+		return err
 	}
 
 	return nil
 }
 
-func (c *Client) LogIoStop() error {
-	r, invokeID, err := c.invokeCommand("AGTLogIoStop")
+func (c *Client) LogIoStop(ctx context.Context) error {
+	r, invokeID, err := c.invokeCommand(ctx, "AGTLogIoStop")
 	defer c.destroyCommand(invokeID)
 	if err != nil {
 		return fmt.Errorf("error while executing AGTLogIoStop command: %w", err)
 	}
 
-el:
-	for {
-		select {
-		case event := <-r.eventChan:
-			if event.IsComplete() {
-				break el
-			}
-
-			return fmt.Errorf("unexpected event")
-		case <-r.done:
-			return context.Canceled
-		}
+	if _, err := processRequest(r); err != nil {
+		return err
 	}
 
 	return nil
 }
 
-type State string
-
-const (
-	StateOnCall         State = "S70000"
-	StateReadyForCall   State = "S70001"
-	StateHasJoinedJob   State = "S70002"
-	StateHasSelectedJob State = "S70003"
-	StateLoggedOn       State = "S70004"
-)
-
-func (c *Client) ListState() (State, error) {
-	r, invokeID, err := c.invokeCommand("AGTListState")
-	defer c.destroyCommand(invokeID)
-	if err != nil {
-		return "", fmt.Errorf("error while executing AGTListState command: %w", err)
-	}
-
-	var state State
-
-el:
-	for {
-		select {
-		case event := <-r.eventChan:
-			if len(event.Segments) == 2 &&
-				event.Segments[0] == "0" &&
-				strings.HasPrefix(event.Segments[1], "S") {
-				if strings.HasPrefix(event.Segments[1], "S70004") {
-					state = State(event.Segments[1])
-					continue
-				}
-
-				parts := strings.Split(event.Segments[1], ",")
-				state = State(parts[0])
-				continue
-			}
-
-			if event.IsComplete() {
-				break el
-			}
-
-			return "", fmt.Errorf("unexpected event")
-		case <-r.done:
-			return "", context.Canceled
-		}
-	}
-
-	return state, nil
+type State struct {
+	Type    StateType
+	JobName string
 }
 
-func (c *Client) ReadField(listType ListType, fieldName string) ([]string, error) {
-	r, invokeID, err := c.invokeCommand("AGTReadField", newArg("list_type", string([]byte{byte(listType)})), newArg("field_name", fieldName))
+type StateType string
+
+const (
+	StateTypeOnCall         StateType = "S70000"
+	StateTypeReadyForCall   StateType = "S70001"
+	StateTypeHasJoinedJob   StateType = "S70002"
+	StateTypeHasSelectedJob StateType = "S70003"
+	StateTypeLoggedOn       StateType = "S70004"
+)
+
+func (c *Client) ListState(ctx context.Context) (*State, error) {
+	r, invokeID, err := c.invokeCommand(ctx, "AGTListState")
+	defer c.destroyCommand(invokeID)
+	if err != nil {
+		return nil, fmt.Errorf("error while executing AGTListState command: %w", err)
+	}
+
+	rawSegments, err := processRequest(r)
+	if err != nil {
+		return nil, err
+	}
+
+	if rawSegments == nil || len(rawSegments) != 1 {
+		return nil, fmt.Errorf("invalid segment")
+	}
+
+	parts := strings.Split(rawSegments[0], ",")
+	if len(parts) != 1 && len(parts) != 2 {
+		return nil, fmt.Errorf("invalid segment")
+	}
+
+	return &State{
+		Type:    StateType(parts[0]),
+		JobName: parts[1],
+	}, nil
+}
+
+type Field struct {
+	Name   string
+	Type   FieldType
+	Length int
+	Value  string
+}
+
+type FieldType string
+
+const (
+	FieldTypeAlphanumeric FieldType = "A"
+	FieldTypeNumeric      FieldType = "N"
+	FieldTypeDate         FieldType = "D"
+	FieldTypeCurrency     FieldType = "$"
+	FieldTypeFutureUse    FieldType = "F"
+)
+
+func (c *Client) ReadField(ctx context.Context, listType ListType, fieldName string) (*Field, error) {
+	r, invokeID, err := c.invokeCommand(ctx, "AGTReadField", newArg("list_type", string([]byte{byte(listType)})), newArg("field_name", fieldName))
 	defer c.destroyCommand(invokeID)
 	if err != nil {
 		return nil, fmt.Errorf("error while executing AGTSetDataField command: %w", err)
 	}
 
-	var dataSegments []string
-el:
-	for {
-		select {
-		case event := <-r.eventChan:
-			if event.IsComplete() {
-				continue
-			}
-			if event.Type == EventTypeData {
-				dataSegments = append(dataSegments, event.Segments...)
-				if event.Incomplete {
-					continue
-				}
-				break el
-			}
-
-			return nil, fmt.Errorf("unexpected event")
-		case <-r.done:
-			return nil, context.Canceled
-		}
+	rawSegments, err := processRequest(r)
+	if err != nil {
+		return nil, err
 	}
 
-	return dataSegments, nil
+	if rawSegments == nil || len(rawSegments) != 2 || rawSegments[0] == "M00001" {
+		return nil, fmt.Errorf("invalid segment")
+	}
+
+	parts := strings.Split(rawSegments[1], ",")
+	if len(parts) != 4 {
+		return nil, fmt.Errorf("invalid segment")
+	}
+
+	length, err := strconv.Atoi(parts[2])
+	if err != nil {
+		return nil, fmt.Errorf("cannot convert field length: %w", err)
+	}
+
+	return &Field{
+		Name:   parts[0],
+		Type:   FieldType(parts[1]),
+		Length: length,
+		Value:  parts[3],
+	}, nil
 }

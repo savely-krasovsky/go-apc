@@ -1,14 +1,10 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"log"
-	"os"
-	"os/signal"
-	"strconv"
-	"strings"
-	"syscall"
 
 	"gitlab.sovcombank.group/scb-mobile/lib/go-apc.git"
 )
@@ -28,7 +24,7 @@ func main() {
 	flag.StringVar(&jobName, "job-name", "", "Job name")
 	flag.Parse()
 
-	client, err := apc.NewClient(addr, apc.WithLogger())
+	client, err := apc.NewClient(addr, apc.WithLogger(), apc.WithNativeHTTPClient())
 	if err != nil {
 		panic(err)
 	}
@@ -38,60 +34,70 @@ func main() {
 		shutdown <- client.Start()
 	}(shutdown)
 
-	if err := client.Logon(agentName, password); err != nil {
+	if err := client.Logon(context.Background(), agentName, password); err != nil {
 		panic(err)
 	}
 
 	defer func() {
-		if err := client.Logoff(); err != nil {
+		if err := client.Logoff(context.Background()); err != nil {
 			log.Println(err)
 		}
 	}()
 
-	if err := client.ReserveHeadset(headsetID); err != nil {
+	for n := range client.Notifications(context.Background()) {
+		fmt.Println(n.Type)
+	}
+
+	/*if err := client.ReserveHeadset(context.Background(), headsetID); err != nil {
 		panic(err)
 	}
 	defer func() {
-		if err := client.FreeHeadset(); err != nil {
+		if err := client.FreeHeadset(context.Background()); err != nil {
 			log.Println(err)
 		}
 	}()
 
-	if err := client.ConnectHeadset(); err != nil {
+	if err := client.ConnectHeadset(context.Background()); err != nil {
 		panic(err)
 	}
 	defer func() {
-		if err := client.DisconnectHeadset(); err != nil {
+		if err := client.DisconnectHeadset(context.Background()); err != nil {
 			log.Println(err)
 		}
 	}()
 
-	if err := client.AttachJob(jobName); err != nil {
+	if err := client.AttachJob(context.Background(), jobName); err != nil {
 		panic(err)
 	}
 	defer func() {
-		if err := client.DetachJob(); err != nil {
+		if err := client.DetachJob(context.Background()); err != nil {
 			log.Println(err)
 		}
 	}()
 
-	if err := client.SetDataField(apc.ListTypeOutbound, "DEBT_ID"); err != nil {
+	keys, err := client.ListState(context.Background())
+	if err != nil {
 		panic(err)
 	}
-	if err := client.SetDataField(apc.ListTypeOutbound, "CURPHONE"); err != nil {
+	_ = keys
+
+	if err := client.SetDataField(context.Background(), apc.ListTypeOutbound, "DEBT_ID"); err != nil {
+		panic(err)
+	}
+	if err := client.SetDataField(context.Background(), apc.ListTypeOutbound, "CURPHONE"); err != nil {
 		panic(err)
 	}
 
-	if err := client.AvailWork(); err != nil {
+	if err := client.AvailWork(context.Background()); err != nil {
 		panic(err)
 	}
 	defer func() {
-		if err := client.NoFurtherWork(); err != nil {
+		if err := client.NoFurtherWork(context.Background()); err != nil {
 			log.Println(err)
 		}
 	}()
 
-	if err := client.ReadyNextItem(); err != nil {
+	if err := client.ReadyNextItem(context.Background()); err != nil {
 		log.Println(err)
 	}
 
@@ -122,7 +128,7 @@ func main() {
 								break
 							}
 
-							field, err := client.ReadField(apc.ListTypeOutbound, "PHONE_ID"+strconv.Itoa(id))
+							field, err := client.ReadField(context.Background(), apc.ListTypeOutbound, "PHONE_ID"+strconv.Itoa(id))
 							if err != nil {
 								log.Println(err)
 								break
@@ -134,18 +140,18 @@ func main() {
 			}
 
 			if event.Keyword == "AGTAutoReleaseLine" {
-				if err := client.ReleaseLine(); err != nil {
+				if err := client.ReleaseLine(context.Background()); err != nil {
 					log.Println(err)
 				}
 
-				if err := client.FinishedItem(35); err != nil {
+				if err := client.FinishedItem(context.Background(), 22); err != nil {
 					log.Println(err)
 				}
 
-				if err := client.ReadyNextItem(); err != nil {
+				if err := client.ReadyNextItem(context.Background()); err != nil {
 					log.Println(err)
 				}
 			}
 		}
-	}
+	}*/
 }
