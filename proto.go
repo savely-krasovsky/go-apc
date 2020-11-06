@@ -323,8 +323,8 @@ func processNotifications(r *request, notifications chan<- Notification) {
 					case 0:
 						state++
 					case 1:
+						fields = make(map[string]string)
 						for _, s := range event.Segments[2:] {
-							fields = make(map[string]string)
 							parts := strings.Split(s, ",")
 							if len(parts) != 2 {
 								continue

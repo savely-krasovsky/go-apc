@@ -5,6 +5,10 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"os"
+	"os/signal"
+	"strconv"
+	"syscall"
 
 	"gitlab.sovcombank.group/scb-mobile/lib/go-apc.git"
 )
@@ -44,11 +48,7 @@ func main() {
 		}
 	}()
 
-	for n := range client.Notifications(context.Background()) {
-		fmt.Println(n.Type)
-	}
-
-	/*if err := client.ReserveHeadset(context.Background(), headsetID); err != nil {
+	if err := client.ReserveHeadset(context.Background(), headsetID); err != nil {
 		panic(err)
 	}
 	defer func() {
@@ -111,35 +111,35 @@ func main() {
 			return
 		case <-shutdown:
 			return
-		case event, ok := <-client.Notifications():
+		case notification, ok := <-client.Notifications(context.Background()):
 			if !ok {
 				fmt.Println("notification channel closed!")
 				return
 			}
 
-			if event.Keyword == "AGTCallNotify" {
-				for _, s := range event.Segments {
-					parts := strings.Split(s, ",")
-					if len(parts) == 2 {
-						if parts[0] == "CURPHONE" {
-							id, err := strconv.Atoi(parts[1])
-							if err != nil {
-								log.Println(err)
-								break
-							}
-
-							field, err := client.ReadField(context.Background(), apc.ListTypeOutbound, "PHONE_ID"+strconv.Itoa(id))
-							if err != nil {
-								log.Println(err)
-								break
-							}
-							fmt.Println(field)
-						}
+			if notification.Type == apc.NotificationTypeCallNotify {
+				for k, v := range notification.Payload.(map[string]string) {
+					if k != "CURPHONE" {
+						continue
 					}
+
+					id, err := strconv.Atoi(v)
+					if err != nil {
+						log.Println(err)
+						break
+					}
+
+					field, err := client.ReadField(context.Background(), apc.ListTypeOutbound, "PHONE_ID"+strconv.Itoa(id))
+					if err != nil {
+						log.Println(err)
+						break
+					}
+
+					fmt.Println(field)
 				}
 			}
 
-			if event.Keyword == "AGTAutoReleaseLine" {
+			if notification.Type == apc.NotificationTypeAutoReleaseLine {
 				if err := client.ReleaseLine(context.Background()); err != nil {
 					log.Println(err)
 				}
@@ -153,5 +153,5 @@ func main() {
 				}
 			}
 		}
-	}*/
+	}
 }
