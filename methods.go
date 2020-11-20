@@ -542,13 +542,18 @@ func (c *Client) ListState(ctx context.Context) (*State, error) {
 	}
 
 	parts := strings.Split(rawSegments[0], ",")
-	if len(parts) != 1 && len(parts) != 2 {
+	if len(parts) > 2 {
 		return nil, fmt.Errorf("invalid segment")
+	}
+
+	var jobName string
+	if len(parts) == 2 {
+		jobName = parts[1]
 	}
 
 	return &State{
 		Type:    StateType(parts[0]),
-		JobName: parts[1],
+		JobName: jobName,
 	}, nil
 }
 
