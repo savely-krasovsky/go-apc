@@ -85,7 +85,6 @@ func (e Event) IsResponseError() bool {
 	if e.Type != EventTypeResponse ||
 		len(e.Segments) < 2 ||
 		e.Segments[0] != "1" ||
-		len(e.Segments[1]) != 6 ||
 		!strings.HasPrefix(e.Segments[1], "E") {
 		return false
 	}
