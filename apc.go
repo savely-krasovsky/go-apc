@@ -231,7 +231,16 @@ func (c *Client) Notifications(ctx context.Context) <-chan Notification {
 	c.requests[math.MaxUint32] = r
 	c.mu.Unlock()
 
-	go processNotifications(r, c.notifications)
+	go func() {
+		// Don't forget to delete it from map to avoid deadlock while notifications are not in use
+		defer func() {
+			c.mu.Lock()
+			delete(c.requests, math.MaxUint32)
+			c.mu.Unlock()
+		}()
+
+		processNotifications(r, c.notifications)
+	}()
 	return c.notifications
 }
 

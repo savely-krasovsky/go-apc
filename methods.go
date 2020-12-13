@@ -25,9 +25,10 @@ func newRequest(ctx context.Context) *request {
 
 	// Create dedicated event channel for this request
 	return &request{
-		context:   ctx,
-		cancel:    cancel,
-		eventChan: make(chan Event, 1),
+		context: ctx,
+		cancel:  cancel,
+		// Usually one request needs two events: data and response
+		eventChan: make(chan Event, 2),
 	}
 }
 
