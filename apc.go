@@ -11,8 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/spacemonkeygo/openssl"
-	//"github.com/spacemonkeygo/openssl"
+	"github.com/mendersoftware/openssl"
 	"gitlab.sovcombank.group/scb-mobile/lib/go-apc.git/pool"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
