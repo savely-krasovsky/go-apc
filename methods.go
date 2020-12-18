@@ -62,18 +62,20 @@ func (c *Client) invokeCommand(ctx context.Context, keyword string, args ...arg)
 	}
 	c.logger.log(newLogEntry(LogLevelDebug, "Command has encoded.", map[string]interface{}{"raw": string(b)}))
 
+	// Create the request and place it into the requests map;
+	// it should be done BEFORE writing a command into connection to avoid the situation while server responds
+	// so quickly that events being just skipped before processing goroutine even started
+	r := newRequest(ctx)
+	c.mu.Lock()
+	c.requests[invokeID] = r
+	c.mu.Unlock()
+
 	// Write command to connection
 	if _, err := c.conn.Write(b); err != nil {
 		return nil, invokeID, fmt.Errorf("cannot write command: %w", err)
 	}
 
 	c.logger.log(newLogEntry(LogLevelInfo, "Command has sent.", fields))
-
-	r := newRequest(ctx)
-
-	c.mu.Lock()
-	c.requests[invokeID] = r
-	c.mu.Unlock()
 
 	return r, invokeID, nil
 }
