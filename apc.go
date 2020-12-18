@@ -257,8 +257,8 @@ func (c *Client) readEvents() error {
 			}
 		}
 
-		// 4096 bytes is a maximum request size.
-		buf := make([]byte, 4096)
+		// 4096 bytes is the maximum request size, but 256 should be enough
+		buf := make([]byte, 256)
 
 		n, err := decoder.Read(buf)
 		if err != nil {
@@ -273,8 +273,7 @@ func (c *Client) readEvents() error {
 			event, err := decodeEvent(rawEvent)
 			if err != nil {
 				c.logger.log(newLogEntry(LogLevelError, "Error while decoding an event!", map[string]interface{}{"error": err}))
-				// We could ignore it and read newer events.
-				continue
+				return err
 			}
 
 			c.logger.log(newLogEntry(
