@@ -145,14 +145,13 @@ func NewClient(addr string, opts ...Option) (*Client, error) {
 	}
 
 	c := &Client{
-		opts:          options,
-		state:         atomic.NewUint32(ConnOK),
-		conn:          tlsConn,
-		events:        make(chan Event, 128),
-		notifications: make(chan Notification, 128),
-		shutdown:      make(chan error),
-		invokeIDPool:  pool.NewInvokeIDPool(),
-		requests:      make(map[uint32]*request),
+		opts:         options,
+		state:        atomic.NewUint32(ConnOK),
+		conn:         tlsConn,
+		events:       make(chan Event),
+		shutdown:     make(chan error),
+		invokeIDPool: pool.NewInvokeIDPool(),
+		requests:     make(map[uint32]*request),
 	}
 	if options.LogHandler != nil {
 		c.logger = newLogger(options.LogLevel, options.LogHandler)
@@ -199,7 +198,9 @@ func (c *Client) Start() error {
 			c.conn.Close()
 
 			// Close notifications channel...
-			close(c.notifications)
+			if c.notifications != nil {
+				close(c.notifications)
+			}
 
 			// Close global events channel...
 			close(c.events)
@@ -216,6 +217,8 @@ func (c *Client) Start() error {
 
 // Notifications returns read-only notification event channel.
 func (c *Client) Notifications(ctx context.Context) <-chan Notification {
+	c.notifications = make(chan Notification, 128)
+
 	r := newRequest(ctx)
 
 	c.mu.Lock()
