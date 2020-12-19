@@ -260,7 +260,7 @@ func (c *Client) readEvents() error {
 		if err != nil {
 			if err == io.EOF {
 				c.logger.log(newLogEntry(LogLevelInfo, "EOF received.", map[string]interface{}{"error": err}))
-				return nil
+				break
 			}
 
 			c.logger.log(newLogEntry(LogLevelError, "Error received!", map[string]interface{}{"error": err}))
