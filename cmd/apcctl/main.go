@@ -28,7 +28,7 @@ func main() {
 	flag.StringVar(&jobName, "job-name", "", "Job name")
 	flag.Parse()
 
-	client, err := apc.NewClient(addr, apc.WithLogger(), apc.WithNativeHTTPClient())
+	client, err := apc.NewClient(addr, apc.WithLogger())
 	if err != nil {
 		panic(err)
 	}
