@@ -2,7 +2,6 @@ package apc
 
 import (
 	"context"
-	"crypto/tls"
 	"errors"
 	"fmt"
 	"io"
@@ -11,7 +10,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/mendersoftware/openssl"
+	tls "github.com/L11R/apc-tls"
+
 	"gitlab.sovcombank.group/scb-mobile/lib/go-apc.git/pool"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -19,10 +19,9 @@ import (
 )
 
 type Options struct {
-	Timeout          *time.Duration
-	LogLevel         LogLevel
-	LogHandler       LogHandler
-	NativeHTTPClient bool
+	Timeout    *time.Duration
+	LogLevel   LogLevel
+	LogHandler LogHandler
 }
 
 type Option func(*Options)
@@ -64,14 +63,6 @@ func WithLogHandler(logLevel LogLevel, handler LogHandler) Option {
 	return func(options *Options) {
 		options.LogLevel = logLevel
 		options.LogHandler = handler
-	}
-}
-
-// WithNativeHTTPClient returns an Option that forces
-// client to use Golang native HTTP client instead of OpenSSL.
-func WithNativeHTTPClient() Option {
-	return func(options *Options) {
-		options.NativeHTTPClient = true
 	}
 }
 
@@ -118,31 +109,16 @@ func NewClient(addr string, opts ...Option) (*Client, error) {
 		opt(options)
 	}
 
-	var tlsConn net.Conn
-	if !options.NativeHTTPClient {
-		// Avaya Proactive Contact agent binary support only TLSv1
-		sslCtx, err := openssl.NewCtxWithVersion(openssl.TLSv1)
-		if err != nil {
-			return nil, fmt.Errorf("error while initializing OpenSSL context: %w", err)
-		}
-
-		// It's just raw TLS, encrypted by session keys, there is no host verification
-		tlsConn, err = openssl.Dial("tcp", addr, sslCtx, openssl.InsecureSkipHostVerification)
-		if err != nil {
-			return nil, fmt.Errorf("error while dialing: %w", err)
-		}
-	} else {
-		// Golang native realization DO NOT WORK and I don't fucking know why. Seriously.
-		// Server just drops connection after few requests/minutes with errno: -11 (EAGAIN or EWOULDBLOCK).
-		conn, err := net.Dial("tcp", addr)
-		if err != nil {
-			return nil, fmt.Errorf("error while dialing: %w", err)
-		}
-
-		tlsConn = tls.Client(conn, &tls.Config{
-			InsecureSkipVerify: true,
-		})
+	conn, err := net.Dial("tcp", addr)
+	if err != nil {
+		return nil, fmt.Errorf("error while dialing: %w", err)
 	}
+
+	tlsConn := tls.Client(conn, &tls.Config{
+		AvayaCompatibility: true,
+		InsecureSkipVerify: true,
+		MinVersion:         tls.VersionTLS10,
+	})
 
 	c := &Client{
 		opts:         options,
@@ -195,7 +171,9 @@ func (c *Client) Start() error {
 			c.state.Store(ConnClosed)
 
 			// Close it...
-			c.conn.Close()
+			if err := c.conn.Close(); err != nil {
+				return err
+			}
 
 			// Close notifications channel...
 			if c.notifications != nil {
@@ -260,7 +238,7 @@ func (c *Client) readEvents() error {
 		if err != nil {
 			if err == io.EOF {
 				c.logger.log(newLogEntry(LogLevelInfo, "EOF received.", map[string]interface{}{"error": err}))
-				break
+				return ErrConnectionClosed
 			}
 
 			c.logger.log(newLogEntry(LogLevelError, "Error received!", map[string]interface{}{"error": err}))
