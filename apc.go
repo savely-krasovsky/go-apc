@@ -100,7 +100,7 @@ type Client struct {
 	conn          net.Conn
 	events        chan Event
 	notifications chan Notification
-	shutdown      chan struct{}
+	shutdown      chan error
 
 	invokeIDPool *pool.InvokeIDPool
 	requests     map[uint32]*request
@@ -150,7 +150,7 @@ func NewClient(addr string, opts ...Option) (*Client, error) {
 		conn:          tlsConn,
 		events:        make(chan Event, 128),
 		notifications: make(chan Notification, 128),
-		shutdown:      make(chan struct{}),
+		shutdown:      make(chan error),
 		invokeIDPool:  pool.NewInvokeIDPool(),
 		requests:      make(map[uint32]*request),
 	}
@@ -159,15 +159,7 @@ func NewClient(addr string, opts ...Option) (*Client, error) {
 	}
 
 	go func() {
-		if err := c.readEvents(); err != nil {
-			if err == io.EOF {
-				c.logger.log(newLogEntry(LogLevelError, "EOF received!", map[string]interface{}{"error": err}))
-			} else {
-				c.logger.log(newLogEntry(LogLevelError, "Error received!", map[string]interface{}{"error": err}))
-			}
-		}
-
-		c.shutdown <- struct{}{}
+		c.shutdown <- c.readEvents()
 	}()
 
 	// Read AGTSTART
@@ -199,7 +191,7 @@ func (c *Client) Start() error {
 			if ok {
 				r.eventChan <- event
 			}
-		case <-c.shutdown:
+		case err := <-c.shutdown:
 			// In case of shutting down mark connection as closed...
 			c.state.Store(ConnClosed)
 
@@ -217,7 +209,7 @@ func (c *Client) Start() error {
 				r.cancel()
 			}
 
-			return ErrConnectionClosed
+			return err
 		}
 	}
 }
@@ -240,6 +232,7 @@ func (c *Client) Notifications(ctx context.Context) <-chan Notification {
 
 		processNotifications(r, c.notifications)
 	}()
+
 	return c.notifications
 }
 
@@ -262,6 +255,12 @@ func (c *Client) readEvents() error {
 
 		n, err := decoder.Read(buf)
 		if err != nil {
+			if err == io.EOF {
+				c.logger.log(newLogEntry(LogLevelInfo, "EOF received.", map[string]interface{}{"error": err}))
+				return nil
+			}
+
+			c.logger.log(newLogEntry(LogLevelError, "Error received!", map[string]interface{}{"error": err}))
 			return err
 		}
 
