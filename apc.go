@@ -184,9 +184,13 @@ func (c *Client) Start() error {
 			close(c.events)
 
 			// And finally send done signal to all active requests.
-			for _, r := range c.requests {
-				r.cancel()
-			}
+			func() {
+				c.mu.RLock()
+				defer c.mu.RUnlock()
+				for _, r := range c.requests {
+					r.cancel()
+				}
+			}()
 
 			return err
 		}
