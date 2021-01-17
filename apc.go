@@ -153,18 +153,17 @@ func NewClient(addr string, opts ...Option) (*Client, error) {
 		opts:         options,
 		state:        atomic.NewUint32(ConnOK),
 		conn:         tlsConn,
+		decoder:      tlsConn,
 		events:       make(chan Event),
 		shutdown:     make(chan error),
 		invokeIDPool: pool.NewInvokeIDPool(),
 		requests:     make(map[uint32]*request),
 	}
+	if options.Decoder != nil {
+		c.decoder = options.Decoder.Reader(tlsConn)
+	}
 	if options.LogHandler != nil {
 		c.logger = newLogger(options.LogLevel, options.LogHandler)
-	}
-	if options.Decoder != nil {
-		c.decoder = tlsConn
-	} else {
-		c.decoder = options.Decoder.Reader(tlsConn)
 	}
 
 	// Goroutine that starts event reading from the connection
