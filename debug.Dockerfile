@@ -32,4 +32,4 @@ RUN apk add libc6-compat
 
 COPY --from=build-env /go-apc/bin/apcctl /
 COPY --from=build-env /go/bin/dlv /
-CMD ["/dlv", "--listen=:2345", "--headless=true", "--api-version=2", "exec", "/apcctl", "--", "-addr", "192.168.1.2:22700", "-agent-name", "movchan", "-password", "12345", "-headset-id", "32774", "-job-name", "TEST_DIT"]
+CMD ["/dlv", "--listen=:2345", "--headless=true", "--api-version=2", "exec", "/apcctl", "--", "-addr", "192.168.1.2:22700", "-agent-name", "testuser", "-password", "12345", "-headset-id", "32774", "-job-name", "TEST_JOB"]

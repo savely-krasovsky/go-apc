@@ -2,6 +2,7 @@ package apc
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"io"
@@ -10,18 +11,20 @@ import (
 	"sync"
 	"time"
 
-	tls "github.com/L11R/apc-tls"
-	"gitlab.sovcombank.group/scb-mobile/lib/go-apc.git/pool"
+	tlsPatched "github.com/L11R/apc-tls"
+	"github.com/L11R/go-apc/pool"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 	"golang.org/x/text/encoding"
 )
 
 type Options struct {
-	Timeout    *time.Duration
-	LogLevel   LogLevel
-	LogHandler LogHandler
-	Decoder    *encoding.Decoder
+	Timeout       *time.Duration
+	LogLevel      LogLevel
+	LogHandler    LogHandler
+	Decoder       *encoding.Decoder
+	TlsPatched    bool
+	TlsSkipVerify bool
 }
 
 type Option func(*Options)
@@ -71,6 +74,20 @@ func WithLogHandler(logLevel LogLevel, handler LogHandler) Option {
 func WithDecoder(decoder *encoding.Decoder) Option {
 	return func(options *Options) {
 		options.Decoder = decoder
+	}
+}
+
+// WithTlsPatched returns an Option with patched TLS package to fix issues with old TLS 1.0 only Avaya server
+func WithTlsPatched() Option {
+	return func(options *Options) {
+		options.TlsPatched = true
+	}
+}
+
+// WithTlsSkipVerify returns an Option with flag to skip TLS verification (insecure!)
+func WithTlsSkipVerify() Option {
+	return func(options *Options) {
+		options.TlsSkipVerify = true
 	}
 }
 
@@ -143,11 +160,18 @@ func NewClient(addr string, opts ...Option) (*Client, error) {
 
 	// Use patched tls package (w/ disabled BEAST attack mitigation) to wrap the TCP connection;
 	// Otherwise old APC server has random disconnects after a dozen of consistent writes.
-	tlsConn := tls.Client(conn, &tls.Config{
-		AvayaCompatibility: true,
-		InsecureSkipVerify: true,
-		MinVersion:         tls.VersionTLS10,
-	})
+	var tlsConn net.Conn
+	if options.TlsPatched {
+		tlsConn = tlsPatched.Client(conn, &tlsPatched.Config{
+			AvayaCompatibility: true,
+			InsecureSkipVerify: options.TlsSkipVerify,
+			MinVersion:         tls.VersionTLS10,
+		})
+	} else {
+		tlsConn = tls.Client(conn, &tls.Config{
+			InsecureSkipVerify: options.TlsSkipVerify,
+		})
+	}
 
 	c := &Client{
 		opts:         options,
@@ -277,7 +301,7 @@ func (c *Client) readEvents() error {
 		// could be increased in case of getting errors.
 		buf := make([]byte, 256)
 
-		// Without decoder it will use c.tlsConn directly; read through decoder to avoid encoding problems
+		// Without decoder, it will use c.tlsConn directly; read through decoder to avoid encoding problems
 		// (to activate it use WithDecoder()); for example in Russia APC server uses Windows-1251.
 		n, err := c.decoder.Read(buf)
 		if err != nil {

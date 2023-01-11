@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"syscall"
 
-	"gitlab.sovcombank.group/scb-mobile/lib/go-apc.git"
+	"github.com/L11R/go-apc"
 )
 
 func main() {

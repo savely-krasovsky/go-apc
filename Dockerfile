@@ -21,4 +21,4 @@ RUN go build -o ./bin/apcctl cmd/apcctl/main.go
 # final stage
 FROM alpine
 COPY --from=build-env /go-apc/bin/apcctl /
-CMD ["/apcctl", "-addr", "192.168.1.2:22700", "-agent-name", "movchan", "-password", "12345", "-headset-id", "32774", "-job-name", "TEST_DIT"]
+CMD ["/apcctl", "-addr", "192.168.1.2:22700", "-agent-name", "testuser", "-password", "12345", "-headset-id", "32774", "-job-name", "TEST_DIT"]
