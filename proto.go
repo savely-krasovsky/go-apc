@@ -9,11 +9,11 @@ import (
 )
 
 const (
-	// Message separator
+	// RS is Message separator
 	RS byte = 0x1E
-	// IsIncomplete message separator
+	// ETB is IsIncomplete message separator
 	ETB byte = 0x17
-	// End of text
+	// ETX is End of text
 	ETX byte = 0x03
 )
 
