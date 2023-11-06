@@ -8,5 +8,5 @@ require (
 	go.uber.org/atomic v1.11.0
 	go.uber.org/zap v1.25.0
 	golang.org/x/crypto v0.6.0 // indirect
-	golang.org/x/text v0.13.0
+	golang.org/x/text v0.14.0
 )
